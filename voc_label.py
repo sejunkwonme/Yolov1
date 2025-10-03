@@ -31,8 +31,8 @@ VOC데이터셋의 annotation 데이터를 파싱해서
 label을 따로 텍스트 파일에 저장한다
 """
 def cvt_annotation(year, image_id):
-    annotation = open(f"archive/VOC_dataset/VOCdevkit/VOC{year}/Annotations/{image_id}.xml")
-    out_file = open(f"archive/VOC_dataset/VOCdevkit/VOC{year}/labels/{image_id}.txt", 'w') # 이미지 1개당 레이블 파일 txt파일 1개 생성
+    annotation = open(f"data/VOC/VOC{year}/Annotations/{image_id}.xml")
+    out_file = open(f"data/VOC/VOC{year}/labels/{image_id}.txt", 'w') # 이미지 1개당 레이블 파일 txt파일 1개 생성
     tree=ET.parse(annotation)
     root = tree.getroot()
     size = root.find('size')
@@ -52,15 +52,16 @@ def cvt_annotation(year, image_id):
         cvted_bbox = cvt_coordnate((imgw,imgh), vocbox)
         out_file.write(str(cls_id) + " " + " ".join([str(a) for a in cvted_bbox]) + '\n') # ex) aeroplane x y w h 로 나오고 이미지 1개에 여러 줄의 바운딩박스 레이들이 나올 수 있음
 
-wd = getcwd()
+# 현재 디렉토리 cwd변수에 저장한다
+cwd = getcwd()
 
 for year, image_set in voc:
-    if not os.path.exists(f"archive/VOC_dataset/VOCdevkit/VOC{year}/labels"): # 기존 VOC 데이터셋 폴더에 labels 폴더 새로 만들기
-        os.makedirs(f"archive/VOC_dataset/VOCdevkit/VOC{year}/labels")
-    image_ids = open(f"archive/VOC_dataset/VOCdevkit/VOC{year}/ImageSets/Main/{image_set}.txt").read().strip().split()
-    list_file = open(f"{year}_{image_set}.txt", 'w') # 연도_이미지셋으로 새로 txt파일 생성한다 여기에는 이미지 파일의 절대경로가 들어간다
+    if not os.path.exists(f"{cwd}/data/VOC/VOC{year}/labels"): # 기존 VOC 데이터셋 폴더에 labels 폴더 새로 만들기
+        os.makedirs(f"{cwd}/data/VOC/VOC{year}/labels")
+    image_ids = open(f"{cwd}/data/VOC/VOC{year}/ImageSets/Main/{image_set}.txt").read().strip().split()
+    list_file = open(f"{cwd}/data/VOC/{year}_{image_set}.txt", 'w') # 연도_이미지셋으로 새로 txt파일 생성한다 여기에는 이미지 파일의 절대경로가 들어간다
     for image_id in image_ids:
-        list_file.write(f"{wd}/archive/VOC_dataset/VOCdevkit/VOC{year}/JPEGImages/{image_id}.jpg\n") # 이미지파일의 경로를 하나씩 쓴다
+        list_file.write(f"{cwd}/data/VOC/VOC{year}/JPEGImages/{image_id}.jpg\n") # 이미지파일의 경로를 하나씩 쓴다
         cvt_annotation(year, image_id)
     list_file.close()
 
@@ -69,15 +70,15 @@ train_files = ["2007_train.txt", "2007_val.txt", "2012_train.txt", "2012_val.txt
 train_all_files = ["2007_train.txt", "2007_val.txt", "2007_test.txt", "2012_train.txt", "2012_val.txt"]
 
 # train.txt 생성
-with open("train.txt", "w", encoding="utf-8") as outfile:
+with open(f"{cwd}/data/VOC/train.txt", "w", encoding="utf-8") as outfile:
     for fname in train_files:
-        with open(fname, "r", encoding="utf-8") as infile:
+        with open(f"{cwd}/data/VOC/{fname}", "r", encoding="utf-8") as infile:
             outfile.write(infile.read())
             #outfile.write("\n")  # 파일 사이에 개행 추가 (선택적)
 
-# train.all.txt 생성
-with open("train.all.txt", "w", encoding="utf-8") as outfile:
+# train_all.txt 생성
+with open(f"{cwd}/data/VOC/train_all.txt", "w", encoding="utf-8") as outfile:
     for fname in train_all_files:
-        with open(fname, "r", encoding="utf-8") as infile:
+        with open(f"{cwd}/data/VOC/{fname}", "r", encoding="utf-8") as infile:
             outfile.write(infile.read())
             #outfile.write("\n")
