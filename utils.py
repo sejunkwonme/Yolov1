@@ -59,24 +59,36 @@ def NMS(predictions: Float[torch.Tensor, "features"], iou_threshold = 0.5, thres
     flatten_sorted, indices = torch.sort(flatten, dim = 1, descending = True)
     for i in range(20): # 20개의 클래스에 대해 순차적 진행 (NMS는 매 클래스마다 다르게 처리되므로 벡터화 불가능
         for boxi in range(S*S*2):
-            if flatten_sorted[i:i+1,boxi:boxi+1].item() == 0:
+            if flatten_sorted[i,boxi] == 0:
                 continue
             start = boxi + 1
             for boxj in range(start,S*S*2):
                 IoUofBoxes = IoU(flatten_sorted[20:24,boxi:boxi+1].view(1,4,1,1), flatten_sorted[20:24,boxj:boxj+1].view(1,4,1,1))
                 if IoUofBoxes[:,0:1,:,:].item() > iou_threshold:
-                    flatten_sorted[i:i+1,boxj:boxj+1] = 0
+                    flatten_sorted[i,boxj] = 0
 
-    ret_tensor = torch.zeros(1, C + 5 * B , S , S)
+    ret_tensor = torch.zeros(C + 5 * B , S , S)
     for boxi in range(S*S*2):
         maxscore, classnum = torch.max(flatten_sorted[0:20,boxi:boxi+1], dim = 0)
-        if maxscore > 0:
-            ret_tensor[:,21:25, (boxi // S):(boxi // S) + 1, (boxi % S):(boxi % S) + 1] = flatten_sorted[20:24, boxi:boxi+1].view(1,4,1,1)
-            ret_tensor[:,classnum:classnum+1,:,:] = 1
-            ret_tensor[:,20:21, (boxi // S):(boxi // S) + 1, (boxi % S):(boxi % S) + 1] = maxscore
-    return ret_tensor # (1, C + 5 * B, S, S)
+        if maxscore > 0 and ret_tensor[classnum,boxi // S, boxi % S] == 0:
+            ret_tensor[21:25, (boxi // S):(boxi // S) + 1, (boxi % S):(boxi % S) + 1] = flatten_sorted[20:24, boxi:boxi+1].view(4,1,1)
+            ret_tensor[classnum,boxi // S, boxi % S] = 1
+            ret_tensor[20, boxi // S, boxi % S] = maxscore
+    return ret_tensor # (C + 5 * B, S, S)
 
 
-def mAP(pred_tensor_list, true_tensor_list, iou_threshold=0.5, num_classes=20): # 예측결과 텐서 배치의 리스트 레이블 텐서 배치의 리스트 받아 mAP를 계산한다. 박스 변환은 내부에서 처리한다
-    #for batch_tensor in pred_tensor_list:
-    pass
+def mAP(pred_tensor_list, true_tensor_list, iou_threshold=0.5, S = 7, classnum = 20): # 예측결과 텐서 배치의 리스트 레이블 텐서 배치의 리스트 받아 mAP를 계산한다. 박스 변환은 내부에서 처리한다
+
+    pred_nms_list = []
+    for batch in pred_tensor_list:
+        for i in range(batch.size(0)):
+            pred = batch[i] # (C + 5 * B, S, S)
+            pred_nms = NMS(pred, iou_threshold = iou_threshold)
+            pred_nms_list.append(pred_nms)
+
+    for i in range(len(true_tensor_list)):
+        label_num = (true_tensor_list[i][20,:,:] == 1).sum() # 정답 이미지에서 오브젝트의 개수
+        mask_class = (pred_nms_list[i][0:20, :, :] == 1) & (true_tensor_list[i][0:20,:,:] == 1)
+
+        torch.where(
+        )
