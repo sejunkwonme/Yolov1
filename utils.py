@@ -6,7 +6,7 @@ from collections import Counter
 from jaxtyping import Float
 
 # 셀에 상대적인 바운딩박스의 중심좌표를 이미지 전체에 상대적인 좌표로 변환해준다
-def cvtCellCoord2ImgCoord(input: Float[torch.Tensor, "Batch bbox_params S S"], S: int):
+def cvtCellCoord2ImgCoord(input: Float[torch.Tensor, "Batch bbox_params S S"], S = 7):
     device = input.device
     i = torch.arange(S, device=device).view(1, 1, S, 1)
     j = torch.arange(S, device=device).view(1, 1, 1, S)
@@ -67,13 +67,14 @@ def NMS(predictions: Float[torch.Tensor, "features"], iou_threshold = 0.5, thres
                 if IoUofBoxes[:,0:1,:,:].item() > iou_threshold:
                     flatten_sorted[i:i+1,boxj:boxj+1] = 0
 
-    ret = []
+    ret_tensor = torch.zeros(1, C + 5 * B , S , S)
     for boxi in range(S*S*2):
         maxscore, classnum = torch.max(flatten_sorted[0:20,boxi:boxi+1], dim = 0)
         if maxscore > 0:
-            corner = cvtCenter2Corner(cvtCellCoord2ImgCoord(flatten_sorted[20:24, boxi:boxi+1].view(1,4,1,1), S))
-            ret.append([classnum, maxscore, corner[:,0:1,:,:].item(), corner[:,1:2,:,:].item(), corner[:,2:3,:,:].item(), corner[:,3:4,:,:].item()])
-    return ret # [[classnum, maxscore, xmin, ymin, xmax, ymax], ...] 한 이미지 내부의 추론된 여러 박스들
+            ret_tensor[:,21:25, (boxi // S):(boxi // S) + 1, (boxi % S):(boxi % S) + 1] = flatten_sorted[20:24, boxi:boxi+1].view(1,4,1,1)
+            ret_tensor[:,classnum:classnum+1,:,:] = 1
+            ret_tensor[:,20:21, (boxi // S):(boxi // S) + 1, (boxi % S):(boxi % S) + 1] = maxscore
+    return ret_tensor # (1, C + 5 * B, S, S)
 
 
 def mAP(pred_tensor_list, true_tensor_list, iou_threshold=0.5, num_classes=20): # 예측결과 텐서 배치의 리스트 레이블 텐서 배치의 리스트 받아 mAP를 계산한다. 박스 변환은 내부에서 처리한다
