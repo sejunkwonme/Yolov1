@@ -68,7 +68,7 @@ def NMS(predictions: Float[torch.Tensor, "features"], iou_threshold = 0.5, thres
                     flatten_sorted[i,boxj] = 0
 
     ret_tensor = torch.zeros(C + 5 * B , S , S)
-    for boxi in range(S*S*2):
+    for boxi in range(S*S*2): # [0,98)
         maxscore, classnum = torch.max(flatten_sorted[0:20,boxi:boxi+1], dim = 0)
         if maxscore > 0 and ret_tensor[classnum,boxi // S, boxi % S] == 0:
             ret_tensor[21:25, (boxi // S):(boxi // S) + 1, (boxi % S):(boxi % S) + 1] = flatten_sorted[20:24, boxi:boxi+1].view(4,1,1)
@@ -79,16 +79,25 @@ def NMS(predictions: Float[torch.Tensor, "features"], iou_threshold = 0.5, thres
 
 def mAP(pred_tensor_list, true_tensor_list, iou_threshold=0.5, S = 7, classnum = 20): # 예측결과 텐서 배치의 리스트 레이블 텐서 배치의 리스트 받아 mAP를 계산한다. 박스 변환은 내부에서 처리한다
 
-    pred_nms_list = []
+    pred_nms_list = [] # NMS를 거친 3차원 텐서들의 리스트
     for batch in pred_tensor_list:
         for i in range(batch.size(0)):
             pred = batch[i] # (C + 5 * B, S, S)
             pred_nms = NMS(pred, iou_threshold = iou_threshold)
             pred_nms_list.append(pred_nms)
 
-    for i in range(len(true_tensor_list)):
-        label_num = (true_tensor_list[i][20,:,:] == 1).sum() # 정답 이미지에서 오브젝트의 개수
-        mask_class = (pred_nms_list[i][0:20, :, :] == 1) & (true_tensor_list[i][0:20,:,:] == 1)
+    pred_nms_batch = torch.stack(pred_nms_list, dim = 0) # 배치차원을 만들면서 cat 해야하기때문에
+    true_tensor_batch = torch.stack(true_tensor_list, dim = 0)
 
-        torch.where(
-        )
+
+    for i in range(20): # 클래스별로, 그리고 confidence threshold별로 TP, FP, FN 구해야 한다
+        thresholds = np.arange(0.9, 0.1, -0.1, dtype=float)
+        for threshold in thresholds: # threshold마다 반복
+            mask = (pred_nms_batch[:,i,:,:] == 1) # i번재 클래스 위치가 1인것만 추출한다 (B, S, S)
+            indices = torch.nonzero(mask) # (N, 3) [batch_idx, 행, 열]
+            socre_vector = pred_nms_batch[indices[:, 0], i, indices[:, 1], indices[:, 2]] # (N,) 예측값들의 confidence 1차원 벡터
+            
+
+            result = torch.where(mask, pred_nms_batch[:,20:21, :,:], )
+            pr_matrix = pred_nms_batch[:,i:i+1,:,:].view(pred_nms_batch.size(0)*S*S,-1)
+            true_tensor_batch[:,i:i+1,:,:] pred_nms_batch[:,i:i+1,:,:]
