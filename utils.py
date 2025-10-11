@@ -4,6 +4,8 @@ import numpy as np
 import matplotlib.patches as patches
 from collections import Counter
 from jaxtyping import Float
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
 # 셀에 상대적인 바운딩박스의 중심좌표를 이미지 전체에 상대적인 좌표로 변환해준다
 def cvtCellCoord2ImgCoord(input: Float[torch.Tensor, "Batch bbox_params S S"], S = 7):
@@ -40,7 +42,7 @@ def IoU(boxes_preds: Float[torch.Tensor, "Batch bbox_params S S"], boxes_labels:
     return intersection_area / (box1_area + box2_area - intersection_area + 1e-6) # (Batch, 1, S, S)
 
 # 모델에서 추론한 텐서를 가져와서 non-maximum suppression 을 수행한다 이미지 한장씩 수행, 텐서 입력하기 전에 Batch차원 없애야 제대로 작동한다
-def NMS(predictions: Float[torch.Tensor, "features"], iou_threshold = 0.5, threshold = 0.4, S: int=7, B: int=2, C: int=20):
+def NMS(predictions: Float[torch.Tensor, "features"], iou_threshold = 0.7, threshold = 0.7, S: int=7, B: int=2, C: int=20):
     predictions = predictions.reshape(C + B * 5, S, S) # (30, 7, 7)
     box1_scores = predictions[20:21,:,:] * predictions[0:20, :, :] #(20, 7, 7)
     box2_scores = predictions[25:26,:,:] * predictions[0:20, :, :] #(20, 7, 7)
@@ -63,11 +65,11 @@ def NMS(predictions: Float[torch.Tensor, "features"], iou_threshold = 0.5, thres
                 continue
             start = boxi + 1
             for boxj in range(start,S*S*2):
-                IoUofBoxes = IoU(flatten_sorted[20:24,boxi:boxi+1].view(1,4,1,1), flatten_sorted[20:24,boxj:boxj+1].view(1,4,1,1))
+                IoUofBoxes = IoU(flatten_sorted[20:24,boxi:boxi+1].view(1,4,1,1), flatten_sorted[20:24,boxj:boxj+1].view(1,4,1,1), S = 1)
                 if IoUofBoxes[:,0:1,:,:].item() > iou_threshold:
                     flatten_sorted[i,boxj] = 0
 
-    ret_tensor = torch.zeros(C + 5 * B , S , S)
+    ret_tensor = torch.zeros(C + 5 * B , S , S, device=predictions.device)
     for boxi in range(S*S*2): # [0,98)
         maxscore, classnum = torch.max(flatten_sorted[0:20,boxi:boxi+1], dim = 0)
         if maxscore > 0 and ret_tensor[classnum,boxi // S, boxi % S] == 0:
@@ -95,9 +97,56 @@ def mAP(pred_tensor_list, true_tensor_list, iou_threshold=0.5, S = 7, classnum =
         for threshold in thresholds: # threshold마다 반복
             mask = (pred_nms_batch[:,i,:,:] == 1) # i번재 클래스 위치가 1인것만 추출한다 (B, S, S)
             indices = torch.nonzero(mask) # (N, 3) [batch_idx, 행, 열]
-            socre_vector = pred_nms_batch[indices[:, 0], i, indices[:, 1], indices[:, 2]] # (N,) 예측값들의 confidence 1차원 벡터
+            socre_vector = pred_nms_batch[indices[:, 0], 20, indices[:, 1], indices[:, 2]] # (N,) 예측값들의 confidence 1차원 벡터
             
-
+            """
             result = torch.where(mask, pred_nms_batch[:,20:21, :,:], )
             pr_matrix = pred_nms_batch[:,i:i+1,:,:].view(pred_nms_batch.size(0)*S*S,-1)
             true_tensor_batch[:,i:i+1,:,:] pred_nms_batch[:,i:i+1,:,:]
+            """
+
+def plotImage(images, pred_tensor):
+    # 이미지 준비
+    im = np.array(images.squeeze(0).permute(1, 2, 0))
+    H, W, _ = im.shape
+
+    # NMS 수행
+    pred_tensor = pred_tensor.view(-1, 30, 7, 7)
+    pred_tensor = pred_tensor[0]
+    nms_tensor = NMS(pred_tensor)
+    #nms_tensor = pred_tensor
+    # 중심->코너 좌표 변환
+    corner_tensor = cvtCenter2Corner(cvtCellCoord2ImgCoord(nms_tensor[21:25,:,:].unsqueeze(0)))
+    nms_tensor[21:25,:,:] = corner_tensor.squeeze(0)
+
+    # 클래스 채널 부분 (0~19)
+    class_part = nms_tensor[0:20, :, :]
+    mask = class_part.sum(dim=0) != 0  # (7,7)
+
+    # 바운딩박스 좌표 부분 (21~25)
+    bbox_part = nms_tensor[21:25, :, :]  # (4,7,7)
+    selected_bboxes = bbox_part[:, mask]  # (4,N), N = True인 셀 개수
+
+    # 선택된 셀 위치
+    cell_indices = mask.nonzero(as_tuple=False)  # shape = (N,2)
+    N = selected_bboxes.shape[1]
+
+    # Create figure and axes
+    fig, ax = plt.subplots(1)
+    ax.imshow(im)
+
+    for k in range(N):
+        # YOLO 좌표는 0~1 비율
+        xmin = selected_bboxes[0, k].item() * W
+        ymin = selected_bboxes[1, k].item() * H
+        xmax = selected_bboxes[2, k].item() * W
+        ymax = selected_bboxes[3, k].item() * H
+
+        width = xmax - xmin
+        height = ymax - ymin
+
+        rect = patches.Rectangle((xmin, ymin), width, height,
+                                 linewidth=2, edgecolor='r', facecolor='none')
+        ax.add_patch(rect)
+
+    plt.show()

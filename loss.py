@@ -3,7 +3,7 @@ import torch.nn as nn
 from utils import IoU
 from jaxtyping import Float
 
-class Yolov1Loss(nn.Module):
+class Yolov1DetectionLoss(nn.Module):
     def __init__(self, S: int=7, B: int=2, C: int=20):
         super().__init__()
         self.mse = nn.MSELoss(reduction="sum")
@@ -66,4 +66,13 @@ class Yolov1Loss(nn.Module):
             + class_loss
         )
 
+        return loss
+
+class Yolov1ClassificationLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.crossentropy = nn.CrossEntropyLoss()
+
+    def forward(self, predictions, target):
+        loss = self.crossentropy(predictions, target)
         return loss

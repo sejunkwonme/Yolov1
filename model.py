@@ -13,23 +13,33 @@ class CNNBlock(nn.Module):
 class DetectionBlock(nn.Module):
     def __init__(self, S, B, C):
         super().__init__()
-        FCLayers = []
+        Layers = []
 
-        FCLayers += [nn.Flatten()]
-        FCLayers += [nn.Linear(S * S * 1024, 4096)]
-        FCLayers += [nn.LeakyReLU(0.1)]
-        FCLayers += [nn.Dropout(0.5)]
-        FCLayers += [nn.Linear(4096, S * S * (B * 5 + C))]
+        Layers += [nn.Flatten()]
+        Layers += [nn.Linear(S * S * 1024, 4096)]
+        Layers += [nn.LeakyReLU(0.1)]
+        Layers += [nn.Dropout(0.5)]
+        Layers += [nn.Linear(4096, S * S * (B * 5 + C))]
 
-        self.detectionhead = nn.Sequential(*FCLayers)
+        self.detectionhead = nn.Sequential(*Layers)
 
     def forward(self, in_tensor):
         return self.detectionhead(in_tensor)
 
 class ClassificationBlock(nn.Module):
-    def __init__(self, S, B, C):
+    def __init__(self):
         super().__init__()
-        FCLayers = []
+        Layers = []
+
+        Layers += [nn.AdaptiveAvgPool2d((1,1))]
+        Layers += [nn.Flatten()]
+        Layers += [nn.Linear(1024, 1000)]
+
+        self.classificationhead = nn.Sequential(*Layers)
+
+    def forward(self,x):
+        return self.classificationhead(x)
+
 
 class Yolov1Backbone20(nn.Module):
     def __init__(self, **kwargs):
@@ -65,7 +75,6 @@ class Yolov1Backbone20(nn.Module):
         cnnlayers += [CNNBlock(1024, 512, kernel_size=1, stride=1, padding=0, )] # 19
         cnnlayers += [CNNBlock(512, 1024, kernel_size=3, stride=1, padding=1, )] # 20
 
-
         self.backbone20 = nn.Sequential(*cnnlayers)
 
     def forward(self, x):
@@ -89,7 +98,7 @@ class Yolov1Backbone4(nn.Module):
 class Yolov1Model(nn.Module):
     def __init__(self, S = 7, B = 2, C = 20, **kwargs):
         super().__init__()
-        self.mode = kwargs.get("mode", "finetune")
+        self.mode = kwargs.get("mode")
 
         if self.mode == "pretrain":
             self.backbone20 = Yolov1Backbone20(**kwargs)
@@ -106,3 +115,4 @@ class Yolov1Model(nn.Module):
         elif self.mode == "finetune":
             x = self.backbone4(x)
             return self.detectionhead(x)
+        return None

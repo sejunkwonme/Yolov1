@@ -206,4 +206,8 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# 데이터 폴더와 모델 폴더 제외
 data/
+model/
+ImageNet/
+VOC/
