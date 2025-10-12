@@ -15,7 +15,6 @@ class Compose(object):
 
 transform = Compose([
     transforms.ToTensor(),
-transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
 ])
 
 class VOCDataset(torch.utils.data.Dataset):

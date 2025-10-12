@@ -13,10 +13,10 @@ cwd = os.getcwd() # 현재 워킹디렉토리 경로 저장
 # 학습에 쓰일 하이퍼파라미터
 LEARNING_RATE = 1e-4
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-BATCH_SIZE = 128
+BATCH_SIZE = 120
 WEIGHT_DECAY = 1e-4
 MOMENTUM = 0
-NUM_EPOCHS = 200
+NUM_EPOCHS = 10
 NUM_WORKERS = 20
 PIN_MEMORY = True
 IMAGENET_DIR = os.path.join(cwd, 'ImageNet')
@@ -44,10 +44,10 @@ def main():
     ])
     ImageNet_dataset = datasets.ImageFolder(root=IMAGENET_DIR, transform=train_transforms)
     # 2) 사용할 이미지 개수 제한
-    num_samples = 500000  # 원하는 개수
-    subset_indices = list(range(num_samples))
-    subset_dataset = Subset(ImageNet_dataset, subset_indices)
-    ImageNet_loader = DataLoader(subset_dataset, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, shuffle=True)
+    #num_samples = 500000  # 원하는 개수
+    #subset_indices = list(range(num_samples))
+    #subset_dataset = Subset(ImageNet_dataset, subset_indices)
+    ImageNet_loader = DataLoader(ImageNet_dataset, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, shuffle=True, drop_last=True)
 
     total_size = len(dataset)
     train_size = int(0.9 * total_size) # train:test 0.9:0.1
@@ -73,8 +73,6 @@ def main():
         shuffle=True,
         drop_last=False,
     )
-
-
 
     for epoch in range(NUM_EPOCHS):
         mean_loss = []
@@ -104,8 +102,13 @@ def main():
                 tqdmloader.set_postfix(loss = loss.item())
 
 
-        if (epoch + 1) % 100 == 0:
-            torch.save(model.state_dict(), os.path.join(cwd, "model", f"model-pretrain-{epoch}.pth"))
+        #if (epoch + 1) % 5 == 0:
+        torch.save({
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer_pretrain.state_dict(),
+        'loss': loss,
+        }, os.path.join(cwd, "model", f"model-pretrain-{epoch + 1}.pth"))
 
 
 
