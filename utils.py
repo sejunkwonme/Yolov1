@@ -27,15 +27,21 @@ def cvtCenter2Corner(input: Float[torch.Tensor,"Batch bbox_params S S"]):
     return torch.cat([xmin, ymin, xmax, ymax], dim = 1) # (Batch, 4, S, S)
 
 # 예측 박스와 레이블 박스 간의 IoU 를 구한다 (배치, 셀의 i행 j열에 대해 한번에 계산 가능하다)
-def IoU(boxes_preds: Float[torch.Tensor, "Batch bbox_params S S"], boxes_labels: Float[torch.Tensor, "Batch bbox_params S S"], S = 7):
-    img_coord_preds = cvtCellCoord2ImgCoord(boxes_preds, S)
-    img_coord_labels = cvtCellCoord2ImgCoord(boxes_labels, S)
-    box1_corners = cvtCenter2Corner(img_coord_preds)
-    box2_corners = cvtCenter2Corner(img_coord_labels)
-    xmin = torch.max(box1_corners[:, 0:1, :, :], box2_corners[:, 0:1, :, :])
-    ymin = torch.max(box1_corners[:, 1:2, :, :], box2_corners[:, 1:2, :, :])
-    xmax = torch.min(box1_corners[:, 2:3, :, :], box2_corners[:, 2:3, :, :])
-    ymax = torch.min(box1_corners[:, 3:4, :, :], box2_corners[:, 3:4, :, :])
+def IoU(boxes_preds: Float[torch.Tensor, "Batch bbox_params S S"], boxes_labels: Float[torch.Tensor, "Batch bbox_params S S"], S = 7, mode = "mid"):
+    if mode == "mid":
+        img_coord_preds = cvtCellCoord2ImgCoord(boxes_preds, S)
+        img_coord_labels = cvtCellCoord2ImgCoord(boxes_labels, S)
+        box1_corners = cvtCenter2Corner(img_coord_preds)
+        box2_corners = cvtCenter2Corner(img_coord_labels)
+        xmin = torch.max(box1_corners[:, 0:1, :, :], box2_corners[:, 0:1, :, :])
+        ymin = torch.max(box1_corners[:, 1:2, :, :], box2_corners[:, 1:2, :, :])
+        xmax = torch.min(box1_corners[:, 2:3, :, :], box2_corners[:, 2:3, :, :])
+        ymax = torch.min(box1_corners[:, 3:4, :, :], box2_corners[:, 3:4, :, :])
+    elif mode == "corner":
+        xmin = torch.max(boxes_preds[:, 0:1, :, :], boxes_labels[:, 0:1, :, :])
+        ymin = torch.max(boxes_preds[:, 1:2, :, :], boxes_labels[:, 1:2, :, :])
+        xmax = torch.min(boxes_preds[:, 2:3, :, :], boxes_labels[:, 2:3, :, :])
+        ymax = torch.min(boxes_preds[:, 3:4, :, :], boxes_labels[:, 3:4, :, :])
     intersection_area = (xmax - xmin).clamp(0) * (ymax - ymin).clamp(0) # 음수이면 0으로 클램프한다
     box1_area = abs((box1_corners[:,2:3,:,:] - box1_corners[:,0:1,:,:]) * (box1_corners[:,3:4,:,:] - box1_corners[:,1:2,:,:]))
     box2_area = abs((box2_corners[:,2:3,:,:] - box2_corners[:,0:1,:,:]) * (box2_corners[:,3:4,:,:] - box2_corners[:,1:2,:,:]))
@@ -43,7 +49,10 @@ def IoU(boxes_preds: Float[torch.Tensor, "Batch bbox_params S S"], boxes_labels:
 
 # 모델에서 추론한 텐서를 가져와서 non-maximum suppression 을 수행한다 이미지 한장씩 수행, 텐서 입력하기 전에 Batch차원 없애야 제대로 작동한다
 def NMS(predictions: Float[torch.Tensor, "features"], iou_threshold = 0.7, threshold = 0.7, S: int=7, B: int=2, C: int=20):
-    predictions = predictions.reshape(C + B * 5, S, S) # (30, 7, 7)
+    predictions = predictions.view(-1, C + B * 5, S, S) # (1, 30, 7, 7)
+    predictions[:,21:25,:,:] = cvtCenter2Corner(cvtCellCoord2ImgCoord(predictions[:,21:25,:,:]))
+    predictions[:,26:30,:,:] = cvtCenter2Corner(cvtCellCoord2ImgCoord(predictions[:,21:25,:,:]))
+    predictions = predictions.view(C + B * 5, S, S) # (30, 7, 7)
     box1_scores = predictions[20:21,:,:] * predictions[0:20, :, :] #(20, 7, 7)
     box2_scores = predictions[25:26,:,:] * predictions[0:20, :, :] #(20, 7, 7)
     box1_scores_masked = torch.where(box1_scores[0:20, :, :] < threshold,
@@ -65,7 +74,7 @@ def NMS(predictions: Float[torch.Tensor, "features"], iou_threshold = 0.7, thres
                 continue
             start = boxi + 1
             for boxj in range(start,S*S*2):
-                IoUofBoxes = IoU(flatten_sorted[20:24,boxi:boxi+1].view(1,4,1,1), flatten_sorted[20:24,boxj:boxj+1].view(1,4,1,1), S = 1)
+                IoUofBoxes = IoU(flatten_sorted[20:24,boxi:boxi+1].view(1,4,1,1), flatten_sorted[20:24,boxj:boxj+1].view(1,4,1,1), mode = "corner")
                 if IoUofBoxes[:,0:1,:,:].item() > iou_threshold:
                     flatten_sorted[i,boxj] = 0
 
