@@ -43,15 +43,22 @@ def IoU(boxes_preds: Float[torch.Tensor, "Batch bbox_params S S"], boxes_labels:
         xmax = torch.min(boxes_preds[:, 2:3, :, :], boxes_labels[:, 2:3, :, :])
         ymax = torch.min(boxes_preds[:, 3:4, :, :], boxes_labels[:, 3:4, :, :])
     intersection_area = (xmax - xmin).clamp(0) * (ymax - ymin).clamp(0) # 음수이면 0으로 클램프한다
-    box1_area = abs((box1_corners[:,2:3,:,:] - box1_corners[:,0:1,:,:]) * (box1_corners[:,3:4,:,:] - box1_corners[:,1:2,:,:]))
-    box2_area = abs((box2_corners[:,2:3,:,:] - box2_corners[:,0:1,:,:]) * (box2_corners[:,3:4,:,:] - box2_corners[:,1:2,:,:]))
+    if mode == "mid":
+        box1_area = abs((box1_corners[:,2:3,:,:] - box1_corners[:,0:1,:,:]) * (box1_corners[:,3:4,:,:] - box1_corners[:,1:2,:,:]))
+        box2_area = abs((box2_corners[:,2:3,:,:] - box2_corners[:,0:1,:,:]) * (box2_corners[:,3:4,:,:] - box2_corners[:,1:2,:,:]))
+
+    elif mode == "corner":
+        box1_area = abs((boxes_preds[:, 2:3, :, :] - boxes_preds[:, 0:1, :, :]) * (
+                    boxes_preds[:, 3:4, :, :] - boxes_preds[:, 1:2, :, :]))
+        box2_area = abs((boxes_labels[:, 2:3, :, :] - boxes_labels[:, 0:1, :, :]) * (
+                    boxes_labels[:, 3:4, :, :] - boxes_labels[:, 1:2, :, :]))
     return intersection_area / (box1_area + box2_area - intersection_area + 1e-6) # (Batch, 1, S, S)
 
 # 모델에서 추론한 텐서를 가져와서 non-maximum suppression 을 수행한다 이미지 한장씩 수행, 텐서 입력하기 전에 Batch차원 없애야 제대로 작동한다
-def NMS(predictions: Float[torch.Tensor, "features"], iou_threshold = 0.7, threshold = 0.7, S: int=7, B: int=2, C: int=20):
+def NMS(predictions: Float[torch.Tensor, "features"], iou_threshold = 0.5, threshold = 0.2, S: int=7, B: int=2, C: int=20):
     predictions = predictions.view(-1, C + B * 5, S, S) # (1, 30, 7, 7)
     predictions[:,21:25,:,:] = cvtCenter2Corner(cvtCellCoord2ImgCoord(predictions[:,21:25,:,:]))
-    predictions[:,26:30,:,:] = cvtCenter2Corner(cvtCellCoord2ImgCoord(predictions[:,21:25,:,:]))
+    predictions[:,26:30,:,:] = cvtCenter2Corner(cvtCellCoord2ImgCoord(predictions[:,26:30,:,:]))
     predictions = predictions.view(C + B * 5, S, S) # (30, 7, 7)
     box1_scores = predictions[20:21,:,:] * predictions[0:20, :, :] #(20, 7, 7)
     box2_scores = predictions[25:26,:,:] * predictions[0:20, :, :] #(20, 7, 7)
@@ -67,24 +74,30 @@ def NMS(predictions: Float[torch.Tensor, "features"], iou_threshold = 0.7, thres
     all_scores = torch.cat([box1_scores_coord, box2_scores_coord], dim = 1) # (24, 14, 7)
 
     flatten = all_scores.view(all_scores.size(0), -1) # (24, 98)
-    flatten_sorted, indices = torch.sort(flatten, dim = 1, descending = True)
+    flatten[0:20,:], indices = torch.sort(flatten[0:20,:], dim = 1, descending = True)
     for i in range(20): # 20개의 클래스에 대해 순차적 진행 (NMS는 매 클래스마다 다르게 처리되므로 벡터화 불가능
         for boxi in range(S*S*2):
-            if flatten_sorted[i,boxi] == 0:
+            if flatten[i,boxi] <= 0:
                 continue
             start = boxi + 1
             for boxj in range(start,S*S*2):
-                IoUofBoxes = IoU(flatten_sorted[20:24,boxi:boxi+1].view(1,4,1,1), flatten_sorted[20:24,boxj:boxj+1].view(1,4,1,1), mode = "corner")
+                IoUofBoxes = IoU(flatten[20:24,indices[i,boxi]].view(1,4,1,1), flatten[20:24,indices[i,boxj]].view(1,4,1,1), mode = "corner")
                 if IoUofBoxes[:,0:1,:,:].item() > iou_threshold:
-                    flatten_sorted[i,boxj] = 0
+                    flatten[i,boxj] = 0
 
     ret_tensor = torch.zeros(C + 5 * B , S , S, device=predictions.device)
     for boxi in range(S*S*2): # [0,98)
-        maxscore, classnum = torch.max(flatten_sorted[0:20,boxi:boxi+1], dim = 0)
-        if maxscore > 0 and ret_tensor[classnum,boxi // S, boxi % S] == 0:
-            ret_tensor[21:25, (boxi // S):(boxi // S) + 1, (boxi % S):(boxi % S) + 1] = flatten_sorted[20:24, boxi:boxi+1].view(4,1,1)
-            ret_tensor[classnum,boxi // S, boxi % S] = 1
-            ret_tensor[20, boxi // S, boxi % S] = maxscore
+        maxscore, classnum = torch.max(flatten[0:20,boxi:boxi+1], dim = 0)
+        classnum = classnum.item()
+        if maxscore > 0:
+            idx = indices[classnum, boxi]
+            if idx > 48:
+                idx = idx - (S * S)
+            y = idx // S
+            x = idx % S
+            ret_tensor[21:25, y:y + 1, x:x + 1] = flatten[20:24, idx].view(4, 1, 1)
+            ret_tensor[classnum, y, x] = 1
+            ret_tensor[20, y, x] = maxscore
     return ret_tensor # (C + 5 * B, S, S)
 
 
@@ -125,8 +138,8 @@ def plotImage(images, pred_tensor):
     nms_tensor = NMS(pred_tensor)
     #nms_tensor = pred_tensor
     # 중심->코너 좌표 변환
-    corner_tensor = cvtCenter2Corner(cvtCellCoord2ImgCoord(nms_tensor[21:25,:,:].unsqueeze(0)))
-    nms_tensor[21:25,:,:] = corner_tensor.squeeze(0)
+    #corner_tensor = cvtCenter2Corner(cvtCellCoord2ImgCoord(nms_tensor[21:25,:,:].unsqueeze(0)))
+    #nms_tensor[21:25,:,:] = corner_tensor.squeeze(0)
 
     # 클래스 채널 부분 (0~19)
     class_part = nms_tensor[0:20, :, :]

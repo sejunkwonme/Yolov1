@@ -15,6 +15,10 @@ class Compose(object):
 
 transform = Compose([
     transforms.ToTensor(),
+    transforms.Normalize(  # ImageNet 평균/표준편차로 정규화
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225]
+        ),
 ])
 
 class VOCDataset(torch.utils.data.Dataset):

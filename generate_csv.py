@@ -10,8 +10,8 @@ cwd = getcwd()
 
 read_train = open(f"{cwd}/data/VOC/train.txt", "r").readlines()
 
-with open(f"{cwd}/data/VOC/1000examples.csv", mode="w", newline="") as train_file:
-    for line in read_train[:1000]: # 여기서 전체 데이서셋에서 사용할 데이터 개수만큼 지정 가능하다
+with open(f"{cwd}/data/VOC/allexamples.csv", mode="w", newline="") as train_file:
+    for line in read_train: # 여기서 전체 데이서셋에서 사용할 데이터 개수만큼 지정 가능하다
         image_file = os.path.basename(line.strip())
         text_file = image_file.replace(".jpg", ".txt") # 파일이름.txt로 변환 여기엔 클래스와 바운딩박스의 위치가 담겨있음
         data = [image_file, text_file]
