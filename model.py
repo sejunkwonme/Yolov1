@@ -96,7 +96,7 @@ class Yolov1Model(nn.Module):
         if self.mode == "pretrain":
             self.pretrainmodel = nn.Sequential(
                 Yolov1Backbone20(**kwargs),
-                ClassificationBlock()
+                ClassificationBlock(),
             )
         elif self.mode == "finetune":
             self.finetunemodel = nn.Sequential(

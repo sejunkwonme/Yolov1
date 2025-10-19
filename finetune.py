@@ -12,38 +12,37 @@ cwd = os.getcwd() # 현재 워킹디렉토리 경로 저장
 seed = 123
 torch.manual_seed(seed)
 # 학습에 쓰일 하이퍼파라미터
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 1e-2
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-BATCH_SIZE = 10
+BATCH_SIZE = 350
 WEIGHT_DECAY = 1e-4
 MOMENTUM = 0
-NUM_EPOCHS = 135
-NUM_WORKERS = 1
+NUM_EPOCHS = 50
+NUM_WORKERS = 20
 PIN_MEMORY = True
 IMAGENET_DIR = os.path.join(cwd, 'ImageNet')
 IMG_DIR = os.path.join(cwd, "data", "VOC", "images")
 LABEL_DIR = os.path.join(cwd, "data", "VOC", "labels")
 
 def main():
-    model = Yolov1Model(S = 7, B = 2, C = 20, mode="finetune").to(DEVICE)
-    checkpoint = torch.load(os.path.join(cwd, 'model', 'model-finetune-130.pth'), weights_only=True)
-    dic = checkpoint['model_state_dict']
+    #model = Yolov1Model(S = 7, B = 2, C = 20, mode="finetune").to(DEVICE)
+    #checkpoint = torch.load(os.path.join(cwd, 'model', 'model-finetune-130.pth'), weights_only=True)
     """
     dict = {k.replace("backbone20.backbone20", "backbone20"): v
                      for k, v in dic.items() if k.startswith("backbone20.")}
     """
 
-    model.load_state_dict(dic)
-    #model = Yolov1Model(mode = "pretrain").to(DEVICE)
-    optimizer_finetune = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
-    #optimizer_pretrain = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
-    loss_finetune = Yolov1DetectionLoss()
-    #loss_pretrain = Yolov1ClassificationLoss()
-    csv_path = os.path.join(cwd, "data", "VOC", "100examples.csv")
-    dataset = VOCDataset(csv_path, img_dir=IMG_DIR, label_dir=LABEL_DIR,)
+    #model.load_state_dict(checkpoint['model_state_dict'])
+    model = Yolov1Model(mode = "pretrain").to(DEVICE)
+    #optimizer_finetune = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+    optimizer_pretrain = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+    #loss_finetune = Yolov1DetectionLoss()
+    loss_pretrain = Yolov1ClassificationLoss()
+    #csv_path = os.path.join(cwd, "data", "VOC", "100examples.csv")
+    #dataset = VOCDataset(csv_path, img_dir=IMG_DIR, label_dir=LABEL_DIR,)
     # 1) 이미지 전처리 (Data Augmentation + Normalization)
 
-    """
+
     train_transforms = transforms.Compose([
         transforms.RandomResizedCrop(224),  # 이미지 크롭 후 224x224
         transforms.RandomHorizontalFlip(),  # 좌우 반전
@@ -53,23 +52,23 @@ def main():
             std=[0.229, 0.224, 0.225]
         ),
     ])
-    """
-    #ImageNet_dataset = datasets.ImageFolder(root=IMAGENET_DIR, transform=train_transforms)
+
+    ImageNet_dataset = datasets.ImageFolder(root=IMAGENET_DIR, transform=train_transforms)
     # 2) 사용할 이미지 개수 제한
     #num_samples = 500000  # 원하는 개수
     #subset_indices = list(range(num_samples))
     #subset_dataset = Subset(ImageNet_dataset, subset_indices)
-    #ImageNet_loader = DataLoader(ImageNet_dataset, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, shuffle=True, drop_last=True)
+    ImageNet_loader = DataLoader(ImageNet_dataset, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, shuffle=True, drop_last=True)
 
-    total_size = len(dataset)
-    train_size = int(0.9 * total_size) # train:test 0.9:0.1
-    test_size = total_size - train_size
+    #total_size = len(dataset)
+    #train_size = int(0.9 * total_size) # train:test 0.9:0.1
+    #test_size = total_size - train_size
 
     generator = torch.Generator().manual_seed(200)
-    train_set, test_set = random_split(dataset, [train_size, test_size], generator=generator)
+    #train_set, test_set = random_split(dataset, [train_size, test_size], generator=generator)
 
     train_loader = DataLoader(
-        dataset=dataset,
+        dataset=ImageNet_dataset,
         batch_size=BATCH_SIZE,
         num_workers=NUM_WORKERS,
         pin_memory=PIN_MEMORY,
@@ -77,6 +76,7 @@ def main():
         drop_last=True,
     )
 
+    """
     test_loader = DataLoader(
         dataset=test_set,
         batch_size=1,
@@ -85,14 +85,15 @@ def main():
         shuffle=True,
         drop_last=False,
     )
-
     """
+
+
     for epoch in range(NUM_EPOCHS):
         mean_loss = []
         preds_list = []
 
         # 프로그레스 바 객체 설정, dataloader객체를 담는다
-        with tqdm(train_loader, unit="batch", ascii=" =", ncols=70) as tqdmloader:
+        with tqdm(ImageNet_loader, unit="batch", ascii=" =", ncols=70) as tqdmloader:
 
             # 학습 단계
             model.train() # 모델을 학습 모드로 설정
@@ -104,13 +105,13 @@ def main():
                 # forward
                 preds = model(images)
                 preds_list.append(preds.detach().clone()) # 추론결과 리스트에 보관
-                loss = loss_finetune(preds, labels)
+                loss = loss_pretrain(preds, labels)
 
 
                 # backward
-                optimizer_finetune.zero_grad()
+                optimizer_pretrain.zero_grad()
                 loss.backward()
-                optimizer_finetune.step()
+                optimizer_pretrain.step()
 
                 tqdmloader.set_postfix(loss = loss.item())
 
@@ -119,13 +120,14 @@ def main():
             torch.save({
             'epoch': epoch,
             'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': loss_finetune.state_dict(),
+            'optimizer_state_dict': loss_pretrain.state_dict(),
             'loss': loss,
             }, os.path.join(cwd, "model", f"model-finetune-{epoch + 1}.pth"))
+
+
+
+
     """
-
-
-
     # 검증 단계
     # model.load_state_dict(torch.load(os.path.join(cwd, "model", f"model-finetune-130.pth"), weights_only=True))
     model.eval()
@@ -142,6 +144,7 @@ def main():
         # mAP 계산
         #mAP_result = mAP(all_preds, all_targets)
         #print(f"Epoch {epoch}: mAP={mAP:.4f}")
+    """
 
 if __name__ == "__main__":
     main()
