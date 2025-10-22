@@ -7,68 +7,73 @@ from loss import Yolov1DetectionLoss, Yolov1ClassificationLoss
 from utils import (NMS, mAP, IoU, plotImage)
 from tqdm import tqdm
 from torchvision import datasets, transforms
+from pathlib import Path
+import torch.nn.init as init
+import torch.nn as nn
 
 cwd = os.getcwd() # 현재 워킹디렉토리 경로 저장
-seed = 123
-torch.manual_seed(seed)
 # 학습에 쓰일 하이퍼파라미터
 LEARNING_RATE = 1e-2
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-BATCH_SIZE = 350
-WEIGHT_DECAY = 1e-4
-MOMENTUM = 0
-NUM_EPOCHS = 50
+BATCH_SIZE = 64
+WEIGHT_DECAY = 5e-4
+MOMENTUM = 0.9
+NUM_EPOCHS = 135
 NUM_WORKERS = 20
 PIN_MEMORY = True
-IMAGENET_DIR = os.path.join(cwd, 'ImageNet')
 IMG_DIR = os.path.join(cwd, "data", "VOC", "images")
 LABEL_DIR = os.path.join(cwd, "data", "VOC", "labels")
+warmup_epochs = 10
+
+def lr_lambda(epoch):
+    if epoch < warmup_epochs:
+        return epoch / warmup_epochs
+    elif epoch < 75:
+        return 1.0          # 1e-2 유지
+    elif epoch < 105:
+        return 0.1          # 1e-3 (1/10)
+    else:
+        return 0.01         # 1e-4 (1/100)
+
+def init_weights_normal(m):
+    import torch.nn.init as init
+    if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+        init.normal_(m.weight, mean=0.0, std=0.01)
+        if m.bias is not None:
+            init.constant_(m.bias, 0)
+
 
 def main():
-    #model = Yolov1Model(S = 7, B = 2, C = 20, mode="finetune").to(DEVICE)
-    #checkpoint = torch.load(os.path.join(cwd, 'model', 'model-finetune-130.pth'), weights_only=True)
+    # 1️⃣ 모델 선언 (모듈 그대로)
+    model = Yolov1Model(S=7, B=2, C=20, mode="finetune").to(DEVICE)
+
+    # 2️⃣ checkpoint 로드
+    checkpoint = torch.load(os.path.join(cwd, 'model', 'convert-weight-42.pth'), weights_only=True)
+    model.load_state_dict(checkpoint, strict=False)
     """
-    dict = {k.replace("backbone20.backbone20", "backbone20"): v
-                     for k, v in dic.items() if k.startswith("backbone20.")}
+    print(list(torch.load(os.path.join(cwd, 'model', 'pretrain-weight-42.pth')).keys())[:10])
+    backbone_state_dict = {}
+    for k, v in dic.items():
+        if k.startswith("pretrainmodel.0.backbone20layers"):
+            new_k = k.replace("pretrainmodel.0.", "finetunemodel.0.")
+            backbone_state_dict[new_k] = v
+    print(list(backbone_state_dict.keys())[:10])
+    torch.save(backbone_state_dict, os.path.join(cwd, 'model', 'convert-weight-42.pth'))
     """
 
-    #model.load_state_dict(checkpoint['model_state_dict'])
-    model = Yolov1Model(mode = "pretrain").to(DEVICE)
-    #optimizer_finetune = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
-    optimizer_pretrain = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
-    #loss_finetune = Yolov1DetectionLoss()
-    loss_pretrain = Yolov1ClassificationLoss()
-    #csv_path = os.path.join(cwd, "data", "VOC", "100examples.csv")
-    #dataset = VOCDataset(csv_path, img_dir=IMG_DIR, label_dir=LABEL_DIR,)
-    # 1) 이미지 전처리 (Data Augmentation + Normalization)
+    model.finetunemodel[1].apply(init_weights_normal)
+    model.finetunemodel[2].apply(init_weights_normal)
+    optimizer_finetune = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY, momentum=MOMENTUM)
+    loss_finetune = Yolov1DetectionLoss().to(DEVICE)
+    train_csv_path = os.path.join(cwd, "data", "VOC", "allexamples.csv")
+    test_csv_path = os.path.join(cwd, "data", "VOC", "2007test.csv")
+    train_set = VOCDataset(train_csv_path, img_dir=IMG_DIR, label_dir=LABEL_DIR,)
+    test_set = VOCDataset(test_csv_path, img_dir=IMG_DIR, label_dir=LABEL_DIR,)
 
-
-    train_transforms = transforms.Compose([
-        transforms.RandomResizedCrop(224),  # 이미지 크롭 후 224x224
-        transforms.RandomHorizontalFlip(),  # 좌우 반전
-        transforms.ToTensor(),  # Tensor 변환
-        transforms.Normalize(  # ImageNet 평균/표준편차로 정규화
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225]
-        ),
-    ])
-
-    ImageNet_dataset = datasets.ImageFolder(root=IMAGENET_DIR, transform=train_transforms)
-    # 2) 사용할 이미지 개수 제한
-    #num_samples = 500000  # 원하는 개수
-    #subset_indices = list(range(num_samples))
-    #subset_dataset = Subset(ImageNet_dataset, subset_indices)
-    ImageNet_loader = DataLoader(ImageNet_dataset, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, shuffle=True, drop_last=True)
-
-    #total_size = len(dataset)
-    #train_size = int(0.9 * total_size) # train:test 0.9:0.1
-    #test_size = total_size - train_size
-
-    generator = torch.Generator().manual_seed(200)
-    #train_set, test_set = random_split(dataset, [train_size, test_size], generator=generator)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer_finetune, lr_lambda=lr_lambda)
 
     train_loader = DataLoader(
-        dataset=ImageNet_dataset,
+        dataset=train_set,
         batch_size=BATCH_SIZE,
         num_workers=NUM_WORKERS,
         pin_memory=PIN_MEMORY,
@@ -76,75 +81,68 @@ def main():
         drop_last=True,
     )
 
-    """
     test_loader = DataLoader(
         dataset=test_set,
-        batch_size=1,
+        batch_size=BATCH_SIZE,
         num_workers=NUM_WORKERS,
         pin_memory=PIN_MEMORY,
         shuffle=True,
-        drop_last=False,
+        drop_last=True,
     )
-    """
-
 
     for epoch in range(NUM_EPOCHS):
-        mean_loss = []
-        preds_list = []
-
         # 프로그레스 바 객체 설정, dataloader객체를 담는다
-        with tqdm(ImageNet_loader, unit="batch", ascii=" =", ncols=70) as tqdmloader:
+        with tqdm(train_loader, unit="batch", ascii=" =", ncols=100) as tqdmloader:
+            train_loss = 0.0
 
             # 학습 단계
             model.train() # 모델을 학습 모드로 설정
             for images, labels in tqdmloader:
-                tqdmloader.set_description(f"Epoch {epoch + 1:04d}")
+                tqdmloader.set_description(f"Train_Epoch {epoch + 1:04d}")
                 images = images.to(DEVICE)
                 labels = labels.to(DEVICE)
 
                 # forward
                 preds = model(images)
-                preds_list.append(preds.detach().clone()) # 추론결과 리스트에 보관
-                loss = loss_pretrain(preds, labels)
-
+                loss = loss_finetune(preds, labels)
 
                 # backward
-                optimizer_pretrain.zero_grad()
+                optimizer_finetune.zero_grad()
                 loss.backward()
-                optimizer_pretrain.step()
+                # gradient clipping (max_norm=1.0)
+                if epoch < warmup_epochs:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
+                optimizer_finetune.step()
+                train_loss += loss.item()
 
-                tqdmloader.set_postfix(loss = loss.item())
+            train_loss /= len(train_loader)
+
+        model.eval()
+        val_loss = 0.0
+
+        with tqdm(test_loader, unit="batch", ascii=" =", ncols=100) as tqdmloader_val:
+            with torch.no_grad():
+                for images, labels in tqdmloader_val:
+                    tqdmloader_val.set_description(f"Validation_Epoch {epoch + 1:04d}")
+                    images = images.to(DEVICE)
+                    labels = labels.to(DEVICE)
+                    out = model(images)
+                    loss = loss_finetune(out, labels)
+                    val_loss += loss.item()
 
 
-        if (epoch + 1) % 10 == 0:
-            torch.save({
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': loss_pretrain.state_dict(),
-            'loss': loss,
-            }, os.path.join(cwd, "model", f"model-finetune-{epoch + 1}.pth"))
+            val_loss /= len(test_loader)
 
+        scheduler.step()
 
-
-
-    """
-    # 검증 단계
-    # model.load_state_dict(torch.load(os.path.join(cwd, "model", f"model-finetune-130.pth"), weights_only=True))
-    model.eval()
-    with torch.no_grad():
-        all_preds = []
-        all_targets = []
-        for images, labels in test_loader:
-            images = images.to(DEVICE)
-            preds = model(images)
-            plotImage(images.to("cpu"), preds)
-            all_preds.append(preds)
-            all_targets.append(labels)
-
-        # mAP 계산
-        #mAP_result = mAP(all_preds, all_targets)
-        #print(f"Epoch {epoch}: mAP={mAP:.4f}")
-    """
+        with open(os.path.join(cwd, "finetune-log.txt"), "a") as f:
+            f.write(f"Epoch {epoch + 1:04d} "
+                    f"train_loss: {train_loss:.4f} "
+                    f"val_loss: {val_loss:.4f} "
+                    f"LR: {optimizer_finetune.param_groups[0]['lr']:.6}\n"
+                    )
+        if epoch + 1 == 135:
+            torch.save(model.state_dict(), os.path.join(cwd, "model", f"finetune-weight-{epoch + 1}.pth"))
 
 if __name__ == "__main__":
     main()
