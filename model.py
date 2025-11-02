@@ -5,8 +5,7 @@ class CNNBlock(nn.Module):
         super().__init__()
         self.block = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, bias=False, **kwargs),
-            nn.BatchNorm2d(out_channels),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(0.1, inplace=True),
         )
 
     def forward(self, in_tensor): # nn.Module 의 forward 를 오버라이드하여 정의해야 한다.
@@ -18,9 +17,10 @@ class DetectionBlock(nn.Module):
         self.detectionlayers = nn.Sequential(
             nn.Flatten(),
             nn.Linear(S * S * 1024, 4096),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(0.5),
             nn.Linear(4096, S * S * (B * 5 + C)),
+            nn.Sigmoid(),
         )
 
     def forward(self, in_tensor):
@@ -39,7 +39,7 @@ class ClassificationBlock(nn.Module):
         return self.classificationlayers(in_tensor)
 
 class Yolov1Backbone20(nn.Module):
-    def __init__(self, **kwargs):
+    def __init__(self):
         super().__init__() # nn.Module 부모클래스의 기능을 온전히 활용하기위해 부모클래스의 생성자를 초기화 한다
         self.backbone20layers = nn.Sequential(
             CNNBlock(3, 64, kernel_size=7, stride=2, padding=3, ),  # 1
@@ -76,7 +76,7 @@ class Yolov1Backbone20(nn.Module):
         return self.backbone20layers(in_tensor)
 
 class Yolov1Backbone4(nn.Module):
-    def __init__(self, **kwargs):
+    def __init__(self):
         super().__init__()
         self.backbone4layers = nn.Sequential(
             CNNBlock(1024, 1024, kernel_size=3, stride=1, padding=1, ), # 21
@@ -89,24 +89,26 @@ class Yolov1Backbone4(nn.Module):
         return self.backbone4layers(in_tensor)
 
 class Yolov1Model(nn.Module):
-    def __init__(self, S = 7, B = 2, C = 20, **kwargs):
+    def __init__(self, S = 7, B = 2, C = 20):
         super().__init__()
+        """
         self.mode = kwargs.get("mode")
-
         if self.mode == "pretrain":
-            self.pretrainmodel = nn.Sequential(
+            self.yolomodel = nn.Sequential(
                 Yolov1Backbone20(**kwargs),
                 ClassificationBlock(),
             )
         elif self.mode == "finetune":
-            self.finetunemodel = nn.Sequential(
+            self.yolomodel = nn.Sequential(
                 Yolov1Backbone20(**kwargs),
                 Yolov1Backbone4(**kwargs),
                 DetectionBlock(S, B, C),
             )
-
+        """
+        self.yolomodel = nn.Sequential(
+            Yolov1Backbone20(),
+            Yolov1Backbone4(),
+            DetectionBlock(S, B, C),
+        )
     def forward(self, x):
-        if self.mode == "pretrain":
-            return self.pretrainmodel(x)
-        elif self.mode == "finetune":
-            return self.finetunemodel(x)
+        return self.yolomodel(x)

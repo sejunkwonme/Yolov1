@@ -48,9 +48,9 @@ def cvt_annotation(year, image_id):
         annotation_bndbox = obj.find('bndbox')
 
         # voc 데이터셋의 bounding box는 절대좌표로 되어 있음 (0 ~ 이미지의 width, height 사이의 값)
-        vocbox = (float(annotation_bndbox.find('xmin').text), float(annotation_bndbox.find('xmax').text), float(annotation_bndbox.find('ymin').text), float(annotation_bndbox.find('ymax').text))
-        cvted_bbox = cvt_coordnate((imgw,imgh), vocbox)
-        out_file.write(str(cls_id) + " " + " ".join([str(a) for a in cvted_bbox]) + '\n') # ex) aeroplane x y w h 로 나오고 이미지 1개에 여러 줄의 바운딩박스 레이들이 나올 수 있음
+        vocbox = (float(annotation_bndbox.find('xmin').text), float(annotation_bndbox.find('ymin').text), float(annotation_bndbox.find('xmax').text), float(annotation_bndbox.find('ymax').text))
+        #cvted_bbox = cvt_coordnate((imgw,imgh), vocbox)
+        out_file.write(str(cls_id) + " " + " ".join([str(a) for a in vocbox]) + '\n') # ex) aeroplane x y w h 로 나오고 이미지 1개에 여러 줄의 바운딩박스 레이들이 나올 수 있음
 
 # 현재 디렉토리 cwd변수에 저장한다
 cwd = getcwd()
@@ -68,6 +68,7 @@ for year, image_set in voc:
 # 합칠 파일 목록
 train_files = ["2007_train.txt", "2007_val.txt", "2012_train.txt", "2012_val.txt"]
 train_all_files = ["2007_train.txt", "2007_val.txt", "2007_test.txt", "2012_train.txt", "2012_val.txt"]
+test_files = ["2007_test.txt"]
 
 # train.txt 생성
 with open(f"{cwd}/data/VOC/train.txt", "w", encoding="utf-8") as outfile:

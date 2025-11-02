@@ -18,12 +18,12 @@ def cvtCellCoord2ImgCoord(input: Float[torch.Tensor, "Batch bbox_params S S"], S
     h = input[:, 3:4, :, :]
     return torch.cat([x_img, y_img, w, h], dim = 1) # (Batch, 4, S, S)
 
-# 박스의 중심좌표와 너비를 받아 박스의 좌상단 좌표와 우하단 좌표로 변환
+# 박스의 중심좌표와  너비를 받아박스의 좌상단 좌표와 우하단 좌표로 변환
 def cvtCenter2Corner(input: Float[torch.Tensor,"Batch bbox_params S S"]):
-    xmin = input[:, 0:1, :, :] - input[:, 2:3, :, :] / 2
-    ymin = input[:, 1:2, :, :] - input[:, 3:4, :, :] / 2
-    xmax = input[:, 0:1, :, :] + input[:, 2:3, :, :] / 2
-    ymax = input[:, 1:2, :, :] + input[:, 3:4, :, :] / 2
+    xmin = input[:, 0:1, :, :] - abs(input[:, 2:3, :, :]) / 2
+    ymin = input[:, 1:2, :, :] - abs(input[:, 3:4, :, :]) / 2
+    xmax = input[:, 0:1, :, :] + abs(input[:, 2:3, :, :]) / 2
+    ymax = input[:, 1:2, :, :] + abs(input[:, 3:4, :, :]) / 2
     return torch.cat([xmin, ymin, xmax, ymax], dim = 1) # (Batch, 4, S, S)
 
 # 예측 박스와 레이블 박스 간의 IoU 를 구한다 (배치, 셀의 i행 j열에 대해 한번에 계산 가능하다)
@@ -42,7 +42,7 @@ def IoU(boxes_preds: Float[torch.Tensor, "Batch bbox_params S S"], boxes_labels:
         ymin = torch.max(boxes_preds[:, 1:2, :, :], boxes_labels[:, 1:2, :, :])
         xmax = torch.min(boxes_preds[:, 2:3, :, :], boxes_labels[:, 2:3, :, :])
         ymax = torch.min(boxes_preds[:, 3:4, :, :], boxes_labels[:, 3:4, :, :])
-    intersection_area = (xmax - xmin).clamp(0) * (ymax - ymin).clamp(0) # 음수이면 0으로 클램프한다
+    intersection_area = (xmax - xmin).clamp(min = 0) * (ymax - ymin).clamp(min = 0) # 음수이면 0으로 클램프한다
     if mode == "mid":
         box1_area = abs((box1_corners[:,2:3,:,:] - box1_corners[:,0:1,:,:]) * (box1_corners[:,3:4,:,:] - box1_corners[:,1:2,:,:]))
         box2_area = abs((box2_corners[:,2:3,:,:] - box2_corners[:,0:1,:,:]) * (box2_corners[:,3:4,:,:] - box2_corners[:,1:2,:,:]))
@@ -52,7 +52,7 @@ def IoU(boxes_preds: Float[torch.Tensor, "Batch bbox_params S S"], boxes_labels:
                     boxes_preds[:, 3:4, :, :] - boxes_preds[:, 1:2, :, :]))
         box2_area = abs((boxes_labels[:, 2:3, :, :] - boxes_labels[:, 0:1, :, :]) * (
                     boxes_labels[:, 3:4, :, :] - boxes_labels[:, 1:2, :, :]))
-    return intersection_area / (box1_area + box2_area - intersection_area + 1e-6) # (Batch, 1, S, S)
+    return intersection_area / (box1_area + box2_area - intersection_area + 1e-9) # (Batch, 1, S, S)
 
 # 모델에서 추론한 텐서를 가져와서 non-maximum suppression 을 수행한다 이미지 한장씩 수행, 텐서 입력하기 전에 Batch차원 없애야 제대로 작동한다
 def NMS(predictions: Float[torch.Tensor, "features"], iou_threshold = 0.5, threshold = 0.2, S: int=7, B: int=2, C: int=20):

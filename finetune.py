@@ -10,67 +10,94 @@ from torchvision import datasets, transforms
 from pathlib import Path
 import torch.nn.init as init
 import torch.nn as nn
+import math
+import torchvision.transforms.v2 as v2
 
-cwd = os.getcwd() # 현재 워킹디렉토리 경로 저장
-# 학습에 쓰일 하이퍼파라미터
+cwd = os.getcwd()
 LEARNING_RATE = 1e-2
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 64
-WEIGHT_DECAY = 5e-4
-MOMENTUM = 0.9
-NUM_EPOCHS = 135
+WEIGHT_DECAY = 1e-3
+MOMENTUM = 0.95
+NUM_EPOCHS = 145
 NUM_WORKERS = 20
 PIN_MEMORY = True
 IMG_DIR = os.path.join(cwd, "data", "VOC", "images")
 LABEL_DIR = os.path.join(cwd, "data", "VOC", "labels")
-warmup_epochs = 10
+WARMUP = 10
 
-def lr_lambda(epoch):
+@torch.no_grad()
+def initialize_HE_conv4(model):
+    for m in model.modules():
+        if isinstance(m, nn.Conv2d):
+            nn.init.kaiming_uniform_(m.weight, a=0.1, mode='fan_in', nonlinearity='leaky_relu')
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0.0)
+
+@torch.no_grad()
+def initialize_detection_block(model):
+    linear_count = 0
+    for m in model.modules():
+        if isinstance(m, nn.Linear):
+            if linear_count == 0:
+                nn.init.kaiming_uniform_(
+                    m.weight, a=0.1, mode='fan_in', nonlinearity='leaky_relu'
+                )
+            else:
+                nn.init.xavier_uniform_(m.weight)
+
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0.0)
+
+            linear_count += 1
+
+train_transform = v2.Compose([
+    v2.RandomAffine(degrees=0, translate=(0.2, 0.2), scale=(0.8, 1.2), fill=(114, 114, 114)),
+    v2.ColorJitter(brightness=0.5, saturation=0.5),
+    v2.Resize((448, 448),),
+    v2.ToImage(),
+    v2.ToDtype(torch.float32, scale=True),
+])
+
+test_transform = v2.Compose([
+    v2.Resize((448, 448),),
+    v2.ToImage(),
+    v2.ToDtype(torch.float32, scale=True),
+])
+
+def warmup_anneal(epoch, warmup_epochs=10, start_factor=0.1, first_factor = 1.0, second_factor = 0.1, final_factor=0.01):
     if epoch < warmup_epochs:
-        return epoch / warmup_epochs
-    elif epoch < 75:
-        return 1.0          # 1e-2 유지
-    elif epoch < 105:
-        return 0.1          # 1e-3 (1/10)
+        progress = epoch / warmup_epochs
+        factor = 10 ** (math.log10(start_factor) + progress * math.log10(first_factor / start_factor))
+        return factor
+    if epoch < 85:
+        return first_factor
+    elif epoch < 115:
+        return second_factor
     else:
-        return 0.01         # 1e-4 (1/100)
-
-def init_weights_normal(m):
-    import torch.nn.init as init
-    if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
-        init.normal_(m.weight, mean=0.0, std=0.01)
-        if m.bias is not None:
-            init.constant_(m.bias, 0)
-
+        return final_factor
 
 def main():
-    # 1️⃣ 모델 선언 (모듈 그대로)
     model = Yolov1Model(S=7, B=2, C=20, mode="finetune").to(DEVICE)
-
-    # 2️⃣ checkpoint 로드
-    checkpoint = torch.load(os.path.join(cwd, 'model', 'convert-weight-42.pth'), weights_only=True)
+    checkpoint = torch.load(os.path.join(cwd, 'model', 'pretrain-weight-49.pth'), weights_only=True)
     model.load_state_dict(checkpoint, strict=False)
-    """
-    print(list(torch.load(os.path.join(cwd, 'model', 'pretrain-weight-42.pth')).keys())[:10])
-    backbone_state_dict = {}
-    for k, v in dic.items():
-        if k.startswith("pretrainmodel.0.backbone20layers"):
-            new_k = k.replace("pretrainmodel.0.", "finetunemodel.0.")
-            backbone_state_dict[new_k] = v
-    print(list(backbone_state_dict.keys())[:10])
-    torch.save(backbone_state_dict, os.path.join(cwd, 'model', 'convert-weight-42.pth'))
-    """
 
-    model.finetunemodel[1].apply(init_weights_normal)
-    model.finetunemodel[2].apply(init_weights_normal)
+    initialize_HE_conv4(model.yolomodel[1])
+    initialize_detection_block(model.yolomodel[2])
+
     optimizer_finetune = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY, momentum=MOMENTUM)
     loss_finetune = Yolov1DetectionLoss().to(DEVICE)
     train_csv_path = os.path.join(cwd, "data", "VOC", "allexamples.csv")
     test_csv_path = os.path.join(cwd, "data", "VOC", "2007test.csv")
-    train_set = VOCDataset(train_csv_path, img_dir=IMG_DIR, label_dir=LABEL_DIR,)
-    test_set = VOCDataset(test_csv_path, img_dir=IMG_DIR, label_dir=LABEL_DIR,)
+    train_set = VOCDataset(train_csv_path, img_dir=IMG_DIR, label_dir=LABEL_DIR,transform=train_transform,)
+    test_set = VOCDataset(test_csv_path, img_dir=IMG_DIR, label_dir=LABEL_DIR,transform=test_transform,)
 
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer_finetune, lr_lambda=lr_lambda)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(
+        optimizer_finetune,
+        lr_lambda=[
+            lambda e: warmup_anneal(e, warmup_epochs=WARMUP, start_factor = 0.1, first_factor = 1.0, second_factor = 0.1, final_factor=0.01),
+        ]
+    )
 
     train_loader = DataLoader(
         dataset=train_set,
@@ -79,6 +106,8 @@ def main():
         pin_memory=PIN_MEMORY,
         shuffle=True,
         drop_last=True,
+        prefetch_factor=6,
+        persistent_workers=True,
     )
 
     test_loader = DataLoader(
@@ -88,10 +117,11 @@ def main():
         pin_memory=PIN_MEMORY,
         shuffle=True,
         drop_last=True,
+        prefetch_factor=6,
+        persistent_workers=True,
     )
 
     for epoch in range(NUM_EPOCHS):
-        # 프로그레스 바 객체 설정, dataloader객체를 담는다
         with tqdm(train_loader, unit="batch", ascii=" =", ncols=100) as tqdmloader:
             train_loss = 0.0
 
@@ -99,8 +129,8 @@ def main():
             model.train() # 모델을 학습 모드로 설정
             for images, labels in tqdmloader:
                 tqdmloader.set_description(f"Train_Epoch {epoch + 1:04d}")
-                images = images.to(DEVICE)
-                labels = labels.to(DEVICE)
+                images = images.cuda(non_blocking=True)
+                labels = labels.cuda(non_blocking=True)
 
                 # forward
                 preds = model(images)
@@ -109,9 +139,6 @@ def main():
                 # backward
                 optimizer_finetune.zero_grad()
                 loss.backward()
-                # gradient clipping (max_norm=1.0)
-                if epoch < warmup_epochs:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
                 optimizer_finetune.step()
                 train_loss += loss.item()
 
@@ -124,8 +151,8 @@ def main():
             with torch.no_grad():
                 for images, labels in tqdmloader_val:
                     tqdmloader_val.set_description(f"Validation_Epoch {epoch + 1:04d}")
-                    images = images.to(DEVICE)
-                    labels = labels.to(DEVICE)
+                    images = images.cuda(non_blocking=True)
+                    labels = labels.cuda(non_blocking=True)
                     out = model(images)
                     loss = loss_finetune(out, labels)
                     val_loss += loss.item()
@@ -133,15 +160,17 @@ def main():
 
             val_loss /= len(test_loader)
 
-        scheduler.step()
-
         with open(os.path.join(cwd, "finetune-log.txt"), "a") as f:
             f.write(f"Epoch {epoch + 1:04d} "
                     f"train_loss: {train_loss:.4f} "
                     f"val_loss: {val_loss:.4f} "
-                    f"LR: {optimizer_finetune.param_groups[0]['lr']:.6}\n"
+                    f"LR: {optimizer_finetune.param_groups[0]['lr']:.6} "
+                    f"Momentem: {optimizer_finetune.param_groups[0]['momentum']:.6}\n"
                     )
-        if epoch + 1 == 135:
+
+        scheduler.step()
+
+        if epoch + 1 == NUM_EPOCHS:
             torch.save(model.state_dict(), os.path.join(cwd, "model", f"finetune-weight-{epoch + 1}.pth"))
 
 if __name__ == "__main__":

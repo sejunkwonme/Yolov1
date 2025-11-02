@@ -26,7 +26,6 @@ class Yolov1DetectionLoss(nn.Module):
         iou_maxes, bestbox = torch.max(ious, dim=0)
         exists_box = target[:, 20:21, :, :]  # in paper this is Iobj_i 0 하고 1중 하나이다
         # (매우 중요 브로드캐스팅 된다. 20:21 은 2번째 차원 값의 개수가 1이므로
-
         # Box Localization loss
         # 레이블에서, 셀에 오브젝트가 없으면 0을 곱해 없는것도 학습 해야한다
         # 오브젝트가 있다면, exists_box 는 1이고
@@ -41,24 +40,22 @@ class Yolov1DetectionLoss(nn.Module):
         )
         box_targets = exists_box * target[:, 21:25, :, :]
 
-        box_predictions_root = torch.sign(box_predictions[:, 2:4, :, :]) * torch.sqrt(
-            torch.abs(box_predictions[:, 2:4, :, :] + 1e-6)
-        )
+        box_predictions_root = torch.sign(box_predictions[:, 2:4, :, :]) * torch.sqrt(torch.abs(box_predictions[:, 2:4, :, :]) + 1e-9)
         box_targets_root = torch.sqrt(box_targets[:,2:4,:,:])
 
-        box_loss = self.mse(box_predictions_root,box_targets_root)
+        #box_loss = self.mse(box_predictions_root,box_targets_root)
+        box_loss = self.mse(box_predictions[:, :2, :, :], box_targets[:, :2, :, :])  + self.mse(box_predictions_root, box_targets_root)
 
         # Object loss
         pred_box = (bestbox * predictions[:, 25:26, :, :] + (1 - bestbox) * predictions[:, 20:21, :, :])
-        object_loss = self.mse((exists_box * pred_box),(exists_box * target[:, 20:21, :, :]))
+        object_loss = self.mse((exists_box * pred_box),(exists_box * iou_maxes.detach()))
+        #object_loss = self.mse((exists_box * pred_box), (exists_box * target[:, 20:21, :, :]))
 
         # No Object loss
         no_object_loss = self.mse((1 - exists_box) * predictions[:, 20:21, :, :], (1 - exists_box) * target[:, 20:21, :, :])
         no_object_loss += self.mse((1 - exists_box) * predictions[:, 25:26, :, :],(1 - exists_box) * target[:, 20:21, :, :])
-
         # Class loss
         class_loss = self.mse(exists_box * predictions[:,:20,:,:],exists_box * target[:,:20,:,:])
-
         loss = (
             self.lambda_coord * box_loss
             + object_loss
@@ -66,7 +63,8 @@ class Yolov1DetectionLoss(nn.Module):
             + class_loss
         )
 
-        return loss
+        return loss / float(predictions.size(0))
+
 
 class Yolov1ClassificationLoss(nn.Module):
     def __init__(self):

@@ -212,3 +212,5 @@ model/
 ImageNet/
 VOC/
 ImageNet_val
+
+*.onnx
