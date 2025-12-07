@@ -214,3 +214,4 @@ VOC/
 ImageNet_val
 
 *.onnx
+*.onnx.data
