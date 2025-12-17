@@ -57,12 +57,12 @@ ImageNet - <https://academictorrents.com/collection/imagenet-2012>
 
 * Image Example
 
-![screenshot1](/assets/figure_1.png)
-![screenshot1](/assets/figure_2.png)
+![screenshot1](/assets/Figure_1.png)
+![screenshot2](/assets/Figure_2.png)
 
 * Average Precision per Classes
 
-![screenshot1](/assets/mAP_grpah.png)
+![screenshot3](/assets/mAP_grpah.png)
 
 * 직접 구현한 모델의 mAP : 0.473
 * 논문상 mAP : 0.63
