@@ -52,3 +52,17 @@ ImageNet - <https://academictorrents.com/collection/imagenet-2012>
 * 내보내기
   * ONNX 형식으로 export할 때 계산 그래프 내에 동적인 조건(if문)이 있으면 오류가 나고, 각 클래스의 이름들을 적절하게 통일되게 설정해 줘야 에러가 나지 않음.
 ***
+
+## 4. Report
+
+* Image Example
+
+![screenshot1](/assets/figure_1.png)
+![screenshot1](/assets/figure_2.png)
+
+* Average Precision per Classes
+
+![screenshot1](/assets/mAP_grpah.png)
+
+* 직접 구현한 모델의 mAP : 0.473
+* 논문상 mAP : 0.63
