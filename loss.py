@@ -16,15 +16,19 @@ class Yolov1DetectionLoss(nn.Module):
     def forward(self, predictions: Float[torch.Tensor, "Batch features"],
                 target: Float[torch.Tensor, "Batch features"]) -> float:
         predictions = predictions.reshape(-1, self.C + self.B * 5, self.S, self.S)
-
+        target = target.reshape(-1, self.C + self.B * 5, self.S, self.S)
         # target boundingbox 는 21:25 한개만 사용, 2개의 예측에 대해IoU 계산
+
+
         iou_b1 = IoU(predictions[:, 21:25, :, :], target[:, 21:25, :, :])
         iou_b2 = IoU(predictions[:, 26:30, :, :], target[:, 21:25, :, :])
-        ious = torch.cat([iou_b1.unsqueeze(0), iou_b2.unsqueeze(0)], dim=0)
+        #ious = torch.cat([iou_b1.unsqueeze(0), iou_b2.unsqueeze(0)], dim=0)
 
         # IoU가 높은것을 선택해서 학습에 이용한다
-        iou_maxes, bestbox = torch.max(ious, dim=0)
+        #iou_maxes, bestbox = torch.max(ious, dim=0)
         exists_box = target[:, 20:21, :, :]  # in paper this is Iobj_i 0 하고 1중 하나이다
+        bestbox = (iou_b2 > iou_b1).float()  # b2가 크면 1, 아니면 0
+        iou_maxes = bestbox * iou_b2 + (1 - bestbox) * iou_b1
         # (매우 중요 브로드캐스팅 된다. 20:21 은 2번째 차원 값의 개수가 1이므로
         # Box Localization loss
         # 레이블에서, 셀에 오브젝트가 없으면 0을 곱해 없는것도 학습 해야한다
@@ -43,13 +47,11 @@ class Yolov1DetectionLoss(nn.Module):
         box_predictions_root = torch.sign(box_predictions[:, 2:4, :, :]) * torch.sqrt(torch.abs(box_predictions[:, 2:4, :, :]) + 1e-9)
         box_targets_root = torch.sqrt(box_targets[:,2:4,:,:])
 
-        #box_loss = self.mse(box_predictions_root,box_targets_root)
         box_loss = self.mse(box_predictions[:, :2, :, :], box_targets[:, :2, :, :])  + self.mse(box_predictions_root, box_targets_root)
 
         # Object loss
         pred_box = (bestbox * predictions[:, 25:26, :, :] + (1 - bestbox) * predictions[:, 20:21, :, :])
         object_loss = self.mse((exists_box * pred_box),(exists_box * iou_maxes.detach()))
-        #object_loss = self.mse((exists_box * pred_box), (exists_box * target[:, 20:21, :, :]))
 
         # No Object loss
         no_object_loss = self.mse((1 - exists_box) * predictions[:, 20:21, :, :], (1 - exists_box) * target[:, 20:21, :, :])

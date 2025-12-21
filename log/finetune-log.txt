@@ -2113,3 +2113,4 @@ Epoch 0033 train_loss: 3.6724 val_loss: 3.5539 LR: 0.01 Momentem: 0.95
 Epoch 0034 train_loss: 3.6456 val_loss: 3.5674 LR: 0.01 Momentem: 0.95
 Epoch 0035 train_loss: 3.6030 val_loss: 3.5870 LR: 0.01 Momentem: 0.95
 Epoch 0036 train_loss: 3.6305 val_loss: 3.6011 LR: 0.01 Momentem: 0.95
+

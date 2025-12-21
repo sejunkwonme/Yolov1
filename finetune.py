@@ -14,13 +14,13 @@ import math
 import torchvision.transforms.v2 as v2
 
 cwd = os.getcwd()
-LEARNING_RATE = 1e-2
+LEARNING_RATE = 2e-3
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-BATCH_SIZE = 64
+BATCH_SIZE = 96
 WEIGHT_DECAY = 1e-3
-MOMENTUM = 0.95
-NUM_EPOCHS = 145
-NUM_WORKERS = 20
+MOMENTUM = 0.9
+NUM_EPOCHS = 100
+NUM_WORKERS = 12
 PIN_MEMORY = True
 IMG_DIR = os.path.join(cwd, "data", "VOC", "images")
 LABEL_DIR = os.path.join(cwd, "data", "VOC", "labels")
@@ -52,8 +52,8 @@ def initialize_detection_block(model):
             linear_count += 1
 
 train_transform = v2.Compose([
-    v2.RandomAffine(degrees=0, translate=(0.2, 0.2), scale=(0.8, 1.2), fill=(114, 114, 114)),
-    v2.ColorJitter(brightness=0.5, saturation=0.5),
+    v2.ColorJitter(brightness=0.3, saturation=0.3),
+    v2.RandomAffine(degrees=0, translate=(0.2, 0.2), scale=(0.8, 1.2), fill=(127, 127, 127)),
     v2.Resize((448, 448),),
     v2.ToImage(),
     v2.ToDtype(torch.float32, scale=True),
@@ -70,17 +70,24 @@ def warmup_anneal(epoch, warmup_epochs=10, start_factor=0.1, first_factor = 1.0,
         progress = epoch / warmup_epochs
         factor = 10 ** (math.log10(start_factor) + progress * math.log10(first_factor / start_factor))
         return factor
-    if epoch < 85:
+    if epoch < 36:
         return first_factor
-    elif epoch < 115:
+    elif epoch < 80:
         return second_factor
     else:
         return final_factor
 
 def main():
     model = Yolov1Model(S=7, B=2, C=20, mode="finetune").to(DEVICE)
-    checkpoint = torch.load(os.path.join(cwd, 'model', 'pretrain-weight-49.pth'), weights_only=True)
-    model.load_state_dict(checkpoint, strict=False)
+    checkpoint = torch.load(os.path.join(cwd, 'model', 'pretrain-weight-secondattempt-36.pth'), weights_only=True)
+    missing, unexpected = model.load_state_dict(checkpoint, strict=False)
+    print("Missing keys:")
+    for k in missing:
+        print("  ", k)
+
+    print("Unexpected keys:")
+    for k in unexpected:
+        print("  ", k)
 
     initialize_HE_conv4(model.yolomodel[1])
     initialize_detection_block(model.yolomodel[2])
@@ -106,7 +113,7 @@ def main():
         pin_memory=PIN_MEMORY,
         shuffle=True,
         drop_last=True,
-        prefetch_factor=6,
+        prefetch_factor=8,
         persistent_workers=True,
     )
 
@@ -117,7 +124,7 @@ def main():
         pin_memory=PIN_MEMORY,
         shuffle=True,
         drop_last=True,
-        prefetch_factor=6,
+        prefetch_factor=8,
         persistent_workers=True,
     )
 
@@ -160,7 +167,7 @@ def main():
 
             val_loss /= len(test_loader)
 
-        with open(os.path.join(cwd, "finetune-log.txt"), "a") as f:
+        with open(os.path.join(cwd, "finetune-final-log.txt"), "a") as f:
             f.write(f"Epoch {epoch + 1:04d} "
                     f"train_loss: {train_loss:.4f} "
                     f"val_loss: {val_loss:.4f} "
@@ -170,8 +177,9 @@ def main():
 
         scheduler.step()
 
-        if epoch + 1 == NUM_EPOCHS:
-            torch.save(model.state_dict(), os.path.join(cwd, "model", f"finetune-weight-{epoch + 1}.pth"))
+        if epoch + 1 >= 49:
+            torch.save(model.state_dict(), os.path.join(cwd, "model", f"finetune-final-batchnorm-weight-{epoch + 1}.pth"))
+
 
 if __name__ == "__main__":
     main()

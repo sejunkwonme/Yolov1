@@ -30,11 +30,11 @@ IMAGENET_VAL_DIR = os.path.join(cwd, "ImageNet_val")
 def initialize_weights(model):
     for m in model.modules():
         if isinstance(m, nn.Conv2d):
-            nn.init.kaiming_uniform_(m.weight, a=0.1, mode='fan_in', nonlinearity='leaky_relu')
+            nn.init.kaiming_normal_(m.weight, a=0.1, mode='fan_in', nonlinearity='leaky_relu')
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0.0)
         elif isinstance(m, nn.Linear):
-            nn.init.xavier_uniform_(m.weight)
+            nn.init.xavier_normal_(m.weight)
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0.0)
 
@@ -168,7 +168,7 @@ def main():
             top1_acc = (top1_acc_total / len(test_loader)) * 100
             top5_acc = (top5_acc_total / len(test_loader)) * 100
 
-        with open(os.path.join(cwd, "log.txt"), "a") as f:
+        with open(os.path.join(cwd, "log-secondattempt.txt"), "a") as f:
             f.write(f"Epoch {epoch + 1:04d} "
                     f"train_loss: {train_loss:.4f} "
                     f"val_loss: {val_loss:.4f} "
@@ -178,7 +178,7 @@ def main():
                     )
 
 
-        torch.save(model.state_dict(), os.path.join(cwd, "model", f"pretrain-weight-{epoch + 1}.pth"))
+        torch.save(model.state_dict(), os.path.join(cwd, "model", f"pretrain-weight-secondattempt-{epoch + 1}.pth"))
 
         scheduler.step(val_loss)
 

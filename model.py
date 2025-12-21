@@ -5,6 +5,7 @@ class CNNBlock(nn.Module):
         super().__init__()
         self.block = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, bias=False, **kwargs),
+            nn.BatchNorm2d(out_channels),
             nn.LeakyReLU(0.1, inplace=True),
         )
 
@@ -18,9 +19,8 @@ class DetectionBlock(nn.Module):
             nn.Flatten(),
             nn.Linear(S * S * 1024, 4096),
             nn.LeakyReLU(0.1, inplace=True),
-            nn.Dropout(0.5),
+            #nn.Dropout(0.5),
             nn.Linear(4096, S * S * (B * 5 + C)),
-            nn.Sigmoid(),
         )
 
     def forward(self, in_tensor):
@@ -89,22 +89,24 @@ class Yolov1Backbone4(nn.Module):
         return self.backbone4layers(in_tensor)
 
 class Yolov1Model(nn.Module):
-    def __init__(self, S = 7, B = 2, C = 20):
+    def __init__(self, S = 7, B = 2, C = 20, **kwargs):
         super().__init__()
+
         """
         self.mode = kwargs.get("mode")
         if self.mode == "pretrain":
             self.yolomodel = nn.Sequential(
-                Yolov1Backbone20(**kwargs),
+                Yolov1Backbone20(),
                 ClassificationBlock(),
             )
         elif self.mode == "finetune":
             self.yolomodel = nn.Sequential(
-                Yolov1Backbone20(**kwargs),
-                Yolov1Backbone4(**kwargs),
+                Yolov1Backbone20(),
+                Yolov1Backbone4(),
                 DetectionBlock(S, B, C),
             )
         """
+
         self.yolomodel = nn.Sequential(
             Yolov1Backbone20(),
             Yolov1Backbone4(),

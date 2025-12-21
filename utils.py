@@ -6,6 +6,7 @@ from collections import Counter
 from jaxtyping import Float
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from operator import itemgetter
 
 # 셀에 상대적인 바운딩박스의 중심좌표를 이미지 전체에 상대적인 좌표로 변환해준다
 def cvtCellCoord2ImgCoord(input: Float[torch.Tensor, "Batch bbox_params S S"], S = 7):
@@ -55,10 +56,13 @@ def IoU(boxes_preds: Float[torch.Tensor, "Batch bbox_params S S"], boxes_labels:
     return intersection_area / (box1_area + box2_area - intersection_area + 1e-9) # (Batch, 1, S, S)
 
 # 모델에서 추론한 텐서를 가져와서 non-maximum suppression 을 수행한다 이미지 한장씩 수행, 텐서 입력하기 전에 Batch차원 없애야 제대로 작동한다
-def NMS(predictions: Float[torch.Tensor, "features"], iou_threshold = 0.5, threshold = 0.2, S: int=7, B: int=2, C: int=20):
+def NMS(predictions: Float[torch.Tensor, "features"], trues, iou_threshold = 0.6, threshold = 0.2, S: int=7, B: int=2, C: int=20):
     predictions = predictions.view(-1, C + B * 5, S, S) # (1, 30, 7, 7)
     predictions[:,21:25,:,:] = cvtCenter2Corner(cvtCellCoord2ImgCoord(predictions[:,21:25,:,:]))
     predictions[:,26:30,:,:] = cvtCenter2Corner(cvtCellCoord2ImgCoord(predictions[:,26:30,:,:]))
+    label = trues.clone()
+    label[:,21:25,:,:] = cvtCenter2Corner(cvtCellCoord2ImgCoord(trues[:, 21:25, :, :]))
+
     predictions = predictions.view(C + B * 5, S, S) # (30, 7, 7)
     box1_scores = predictions[20:21,:,:] * predictions[0:20, :, :] #(20, 7, 7)
     box2_scores = predictions[25:26,:,:] * predictions[0:20, :, :] #(20, 7, 7)
@@ -73,7 +77,7 @@ def NMS(predictions: Float[torch.Tensor, "features"], iou_threshold = 0.5, thres
     box2_scores_coord = torch.cat([box2_scores_masked, predictions[26:30,:,:]], dim = 0) # (24, 7, 7)
     all_scores = torch.cat([box1_scores_coord, box2_scores_coord], dim = 1) # (24, 14, 7)
 
-    flatten = all_scores.view(all_scores.size(0), -1) # (24, 98)
+    flatten = all_scores.view(all_scores.size(0), -1).clone() # (24, 98)
     flatten[0:20,:], indices = torch.sort(flatten[0:20,:], dim = 1, descending = True)
     for i in range(20): # 20개의 클래스에 대해 순차적 진행 (NMS는 매 클래스마다 다르게 처리되므로 벡터화 불가능
         for boxi in range(S*S*2):
@@ -85,90 +89,153 @@ def NMS(predictions: Float[torch.Tensor, "features"], iou_threshold = 0.5, thres
                 if IoUofBoxes[:,0:1,:,:].item() > iou_threshold:
                     flatten[i,boxj] = 0
 
-    ret_tensor = torch.zeros(C + 5 * B , S , S, device=predictions.device)
+    #ret_tensor = torch.zeros(C + 5 * B , S , S, device=predictions.device)
+    gt_used = torch.zeros((20, 1, S, S), dtype=torch.bool, device=label.device)
+    drawing_boxes = []
     for boxi in range(S*S*2): # [0,98)
         maxscore, classnum = torch.max(flatten[0:20,boxi:boxi+1], dim = 0)
         classnum = classnum.item()
         if maxscore > 0:
-            idx = indices[classnum, boxi]
-            if idx > 48:
-                idx = idx - (S * S)
-            y = idx // S
-            x = idx % S
-            ret_tensor[21:25, y:y + 1, x:x + 1] = flatten[20:24, idx].view(4, 1, 1)
-            ret_tensor[classnum, y, x] = 1
-            ret_tensor[20, y, x] = maxscore
-    return ret_tensor # (C + 5 * B, S, S)
+            box = []
+            oriidx = indices[classnum, boxi]
+            #if oriidx > 48: # 이부분이 문제...
+                #oriidx = oriidx - (S * S)
 
+            box.append(classnum) # classindex
+            box.append(maxscore.item()) # score
+            box.append(flatten[20:24,oriidx].detach().clone().tolist()) # x y w h
 
-def mAP(pred_tensor_list, true_tensor_list, iou_threshold=0.5, S = 7, classnum = 20): # 예측결과 텐서 배치의 리스트 레이블 텐서 배치의 리스트 받아 mAP를 계산한다. 박스 변환은 내부에서 처리한다
+            #y = oriidx // S
+            #x = oriidx % S
 
-    pred_nms_list = [] # NMS를 거친 3차원 텐서들의 리스트
-    for batch in pred_tensor_list:
-        for i in range(batch.size(0)):
-            pred = batch[i] # (C + 5 * B, S, S)
-            pred_nms = NMS(pred, iou_threshold = iou_threshold)
-            pred_nms_list.append(pred_nms)
+            maxiou = 0
+            maxx, maxy = -1, -1
+            for a in range(S*S):
+                y = a // S
+                x = a % S
+                if gt_used[classnum:classnum+1, 0, y:y+1, x:x+1].item() == True:
+                    continue
+                if label[:, classnum:classnum + 1, y:y + 1, x:x + 1] != 1:
+                    continue
+                iou = IoU(flatten[20:24, oriidx].view(1, 4, 1, 1), label[:, 21:25, y : y+1, x:x + 1], mode="corner").item()
+                if maxiou < iou:
+                    maxiou = iou
+                    maxx = x
+                    maxy = y
 
-    pred_nms_batch = torch.stack(pred_nms_list, dim = 0) # 배치차원을 만들면서 cat 해야하기때문에
-    true_tensor_batch = torch.stack(true_tensor_list, dim = 0)
+            if maxiou > 0.5:
+                box.append("TP")
+                box.append(maxiou)
+                gt_used[classnum:classnum + 1, 0, maxy:maxy + 1, maxx:maxx + 1] = True
 
+            else:
+                box.append("FP")
+                box.append(maxiou)
 
-    for i in range(20): # 클래스별로, 그리고 confidence threshold별로 TP, FP, FN 구해야 한다
-        thresholds = np.arange(0.9, 0.1, -0.1, dtype=float)
-        for threshold in thresholds: # threshold마다 반복
-            mask = (pred_nms_batch[:,i,:,:] == 1) # i번재 클래스 위치가 1인것만 추출한다 (B, S, S)
-            indices = torch.nonzero(mask) # (N, 3) [batch_idx, 행, 열]
-            socre_vector = pred_nms_batch[indices[:, 0], 20, indices[:, 1], indices[:, 2]] # (N,) 예측값들의 confidence 1차원 벡터
-            
-            """
-            result = torch.where(mask, pred_nms_batch[:,20:21, :,:], )
-            pr_matrix = pred_nms_batch[:,i:i+1,:,:].view(pred_nms_batch.size(0)*S*S,-1)
-            true_tensor_batch[:,i:i+1,:,:] pred_nms_batch[:,i:i+1,:,:]
-            """
+            #ret_tensor[21:25, y:y + 1, x:x + 1] = flatten[20:24, oriidx].reshape(1, 4, 1, 1)
+            #ret_tensor[classnum, y, x] = 1
+            #ret_tensor[20, y, x] = maxscore
+            drawing_boxes.append(box)
+    return drawing_boxes #[[classnum, maxscore, [xmin, ymin, xmax, ymax], "TP" or "FP"], ... ]
 
-def plotImage(images, pred_tensor):
-    # 이미지 준비
-    im = np.array(images.squeeze(0).permute(1, 2, 0))
-    H, W, _ = im.shape
+def mAP(table, GT_num): # 예측결과 텐서 배치의 리스트 레이블 텐서 배치의 리스트 받아 mAP를 계산한다. 박스 변환은 내부에서 처리한다
+    allprecision = []
+    allrecall = []
+    for idx, table_class in enumerate(table):
+        precision = []
+        recall = []
+        TP = 0
+        FP = 0
 
-    # NMS 수행
-    pred_tensor = pred_tensor.view(-1, 30, 7, 7)
-    pred_tensor = pred_tensor[0]
-    nms_tensor = NMS(pred_tensor)
-    #nms_tensor = pred_tensor
-    # 중심->코너 좌표 변환
-    #corner_tensor = cvtCenter2Corner(cvtCellCoord2ImgCoord(nms_tensor[21:25,:,:].unsqueeze(0)))
-    #nms_tensor[21:25,:,:] = corner_tensor.squeeze(0)
+        GTNUM = GT_num[idx]
+        score_sorted = sorted(table_class, key=itemgetter(1), reverse=True) # score 내림차순으로 정렬
+        for row in score_sorted:
+            if row[3] == "TP":
+                TP += 1
+            elif row[3] == "FP":
+                FP += 1
+            PRECISION = TP / (TP + FP)
+            RECALL = TP / GTNUM
+            precision.append(PRECISION)
+            recall.append(RECALL)
 
-    # 클래스 채널 부분 (0~19)
-    class_part = nms_tensor[0:20, :, :]
-    mask = class_part.sum(dim=0) != 0  # (7,7)
+        allprecision.append(precision)
+        allrecall.append(recall)
 
-    # 바운딩박스 좌표 부분 (21~25)
-    bbox_part = nms_tensor[21:25, :, :]  # (4,7,7)
-    selected_bboxes = bbox_part[:, mask]  # (4,N), N = True인 셀 개수
+    return allprecision, allrecall
 
-    # 선택된 셀 위치
-    cell_indices = mask.nonzero(as_tuple=False)  # shape = (N,2)
-    N = selected_bboxes.shape[1]
+def plotImage(image, pred, label):
+    classes = ["aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
+               "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
 
-    # Create figure and axes
-    fig, ax = plt.subplots(1)
-    ax.imshow(im)
+    label[:,21:25,:,:] = cvtCenter2Corner(cvtCellCoord2ImgCoord(label[:,21:25,:,:]))
+    labelbox = []
+    for a in range(49):
+        y = a // 7
+        x = a % 7
 
-    for k in range(N):
-        # YOLO 좌표는 0~1 비율
-        xmin = selected_bboxes[0, k].item() * W
-        ymin = selected_bboxes[1, k].item() * H
-        xmax = selected_bboxes[2, k].item() * W
-        ymax = selected_bboxes[3, k].item() * H
+        if label[:, 20:21, y: y + 1, x:x + 1].item() == 1: # 원본 박스 존재 확인
+            box = []
+            cls_idx = torch.argmax(label[:, 0:20, y: y + 1, x:x + 1], dim = 1).item()
+            box.append(cls_idx)
+            coords = label[:, 21:25, y:y+1, x:x+1].detach().cpu().squeeze().tolist()
+            box.append(coords)
+            labelbox.append(box)
 
-        width = xmax - xmin
-        height = ymax - ymin
+    # image: (C,H,W) or (1,C,H,W) on GPU 가능
+    if image.ndim == 4:
+        image = image[0]
 
-        rect = patches.Rectangle((xmin, ymin), width, height,
+    img = image.detach().cpu()
+    img = img.permute(1, 2, 0)  # HWC
+    if img.max() > 1.5:         # 0~255인 경우 대비
+        img = img / 255.0
+
+    fig, ax = plt.subplots(1, 1)
+    ax.imshow(img.clamp(0, 1))
+    ax.axis("off")
+
+    for obj in pred:
+        cls = int(obj[0])
+        score = float(obj[1])
+        xmin, ymin, xmax, ymax = obj[2]
+        xmin = xmin * 448
+        xmax = xmax * 448
+        ymin = ymin * 448
+        ymax = ymax * 448
+
+        tag = obj[3] if len(obj) > 3 else ""
+
+        w = xmax - xmin
+        h = ymax - ymin
+
+        rect = patches.Rectangle((xmin, ymin), w, h,
                                  linewidth=2, edgecolor='r', facecolor='none')
         ax.add_patch(rect)
+
+        name = classes[cls] if 0 <= cls < len(classes) else str(cls)
+        ax.text(xmin, ymin, f"{name} {score:.2f} {tag}",
+                color="white", fontsize=10,
+                bbox=dict(facecolor="red", alpha=0.5, pad=2, edgecolor="none"))
+
+    for box in labelbox:
+        cls = int(box[0])
+        xmin, ymin, xmax, ymax = box[1]
+        xmin = xmin * 448
+        xmax = xmax * 448
+        ymin = ymin * 448
+        ymax = ymax * 448
+
+        w = xmax - xmin
+        h = ymax - ymin
+
+        rect = patches.Rectangle((xmin, ymin), w, h,
+                                 linewidth=2, edgecolor='g', facecolor='none')
+        ax.add_patch(rect)
+
+        name = classes[cls] if 0 <= cls < len(classes) else str(cls)
+        ax.text(xmin, ymin, f"{name}",
+                color="white", fontsize=10,
+                bbox=dict(facecolor="green", alpha=0.5, pad=2, edgecolor="none"))
 
     plt.show()
