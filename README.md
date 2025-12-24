@@ -64,5 +64,8 @@ ImageNet - <https://academictorrents.com/collection/imagenet-2012>
 
 ![screenshot3](/assets/mAP_grpah.png)
 
-* 직접 구현한 모델의 mAP : 0.473
-* 논문상 mAP : 0.63
+* 직접 구현한 모델의 mAP : 0.47
+* 논문상 mAP@0.5 : 0.63
+* 실제로 결과를 확인해 보니 IOU가 0.5에 아깝게 미달하여 FP로 판정된 경우들이 많았고 레이블은 존재하는데 아예 예측이 안된 FN인 경우도 많았다. 이 때문에 Recall 의 최대가 너무 낮아 점수에 영향을 준 것으로 예상됨.
+* Joseph Redmon 은 이전에 공개한 데이터셋과 모델의 가중치를 전부 비공개 처리했다. 그러므로 명확하게 동일 조건 하에서의 학습이 아닐 수 있음. 특히 pretrain을 할 때 다른 CNN classifier 모델에서 가중치를 가져오지 않고 xavier glorot 법으로 가중치를 초기화하여 시작했음.
+* 그럼에도 불구하고 데이터 전처리 과정과 학습을 위한 좌표변환 및 배치처리에 대한 귀중한 경험을 얻을 수 있었음.

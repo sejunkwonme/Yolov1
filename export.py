@@ -1,34 +1,82 @@
-import torch
 import os
+import torch
+import torch.nn as nn
+import onnx
+from onnxsim import simplify
 
 from model import Yolov1Model
 
 cwd = os.getcwd()
 PTH_PATH = os.path.join(cwd, 'model', 'finetune-weight-third145.pth')
-ONNX_PATH = os.path.join(cwd, 'thirdmodel.onnx')
+ONNX_PATH_BACKBONE = os.path.join(cwd, 'thirdmodel-backbone.onnx')
+ONNX_PATH_HEAD     = os.path.join(cwd, 'thirdmodel-head.onnx')
 
-# 입력 크기 (필요하면 수정)
-B, C, H, W = 1, 3, 448, 448
+ONNX_SIM_BACKBONE  = os.path.join(cwd, 'thirdmodel-backbone.sim.onnx')
+ONNX_SIM_HEAD      = os.path.join(cwd, 'thirdmodel-head.sim.onnx')
 
 device = "cpu"
 
-# 1) 모델 로드 (torch.save(model)로 저장된 경우에만 동작)
 model = Yolov1Model(S=7, B=2, C=20).to(device=device)
-model.load_state_dict(torch.load(PTH_PATH))
+missing, unexpected = model.load_state_dict(torch.load(PTH_PATH, map_location=device), strict=False)
+print("Missing keys:", missing)
+print("Unexpected keys:", unexpected)
 model.eval()
 
-# 2) 더미 입력
-dummy = torch.randn(B, C, H, W, device=device)
+dummy1 = torch.randn(1, 3, 448, 448, device=device)
 
-# 3) ONNX export
-with torch.no_grad():
-    torch.onnx.export(
-        model,
-        dummy,
-        ONNX_PATH,
-        input_names=["input"],
-        output_names=["output"],
-        do_constant_folding=True,
+backbone = nn.Sequential(model.yolomodel[0]).eval()
+
+torch.onnx.export(
+    backbone,
+    (dummy1,),
+    ONNX_PATH_BACKBONE,
+    input_names=["input"],
+    output_names=["output"],
+    export_params=True,
+    keep_initializers_as_inputs=False,
+)
+
+dummy2 = torch.randn(1, 1024, 14, 14, device=device)
+
+head = nn.Sequential(model.yolomodel[1], model.yolomodel[2]).eval()
+
+torch.onnx.export(
+    head,
+    (dummy2,),
+    ONNX_PATH_HEAD,
+    input_names=["input"],
+    output_names=["output"],
+    do_constant_folding=True,
+    export_params=True,
+    keep_initializers_as_inputs=False,
+)
+
+print("Export done.")
+
+def simplify_onnx(in_path: str, out_path: str, input_shapes: dict):
+    model_onnx = onnx.load(in_path)
+
+    sim_model, ok = simplify(
+        model_onnx,
+        input_shapes=input_shapes,
+        dynamic_input_shape=False,
+        check_n=3,
     )
 
-print("Exported:", ONNX_PATH)
+    if not ok:
+        raise RuntimeError(f"onnxsim simplify failed: {in_path}")
+
+    onnx.save(sim_model, out_path)
+    print(f"Simplified saved: {out_path}")
+
+simplify_onnx(
+    ONNX_PATH_BACKBONE,
+    ONNX_SIM_BACKBONE,
+    input_shapes={"input": [1, 3, 448, 448]},
+)
+
+simplify_onnx(
+    ONNX_PATH_HEAD,
+    ONNX_SIM_HEAD,
+    input_shapes={"input": [1, 1024, 14, 14]},
+)
